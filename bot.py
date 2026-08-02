@@ -1,7 +1,7 @@
 """
-Telegram File Uploader Bot - v5 Professional
+Telegram File Uploader Bot - v5.1 Professional
 Aiogram 3.x | JSON Storage | Railway Ready
-Password Protection | Colored WebApp Buttons | Download Reports | Beautiful Links
+Password Protection | Colored Reply Keyboard | Download Reports | Beautiful Links
 """
 
 import asyncio
@@ -24,7 +24,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup,
     InlineKeyboardButton, FSInputFile, BotCommand,
-    ReplyKeyboardMarkup, KeyboardButton, WebAppInfo
+    ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from dotenv import load_dotenv
@@ -209,135 +209,105 @@ class JSONManager:
 
 db = JSONManager()
 
-# ==================== COLORED WEBAPP KEYBOARDS ====================
-# Telegram Mini App button colors: https://core.telegram.org/bots/webapps
+# ==================== KEYBOARDS ====================
 
-def make_button(text: str, callback_data: str = None, url: str = None, 
-                pay: bool = False, web_app: WebAppInfo = None) -> InlineKeyboardButton:
-    """Create a button with proper formatting"""
-    if web_app:
-        return InlineKeyboardButton(text=text, web_app=web_app)
-    elif url:
-        return InlineKeyboardButton(text=text, url=url)
-    elif pay:
-        return InlineKeyboardButton(text=text, pay=pay)
-    else:
-        return InlineKeyboardButton(text=text, callback_data=callback_data)
+def admin_main_menu():
+    """Main admin ReplyKeyboard with colored buttons"""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📤 آپلود فایل جدید")],
+            [KeyboardButton(text="📂 مدیریت فایل‌ها"), KeyboardButton(text="📊 آمار ربات")],
+            [KeyboardButton(text="📢 ارسال همگانی"), KeyboardButton(text="⚙️ تنظیمات")],
+            [KeyboardButton(text="👥 کاربران"), KeyboardButton(text="👮 ادمین‌ها")],
+            [KeyboardButton(text="📜 گزارشات"), KeyboardButton(text="🔗 لینک‌های فعال")],
+            [KeyboardButton(text="💾 پشتیبان‌گیری")]
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="👑 یک گزینه از منوی مدیریت انتخاب کنید...",
+        selective=True
+    )
 
-def panel_kb():
-    """Main admin panel with colored sections"""
-    b = InlineKeyboardBuilder()
-    
-    # Upload section
-    b.row(make_button("📤 آپلود فایل جدید", "upload"))
-    
-    # Management section
-    b.row(
-        make_button("📂 مدیریت فایل‌ها", "files_list"),
-        make_button("📊 آمار و اطلاعات", "stats")
+def user_main_menu():
+    """Main user ReplyKeyboard"""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📥 دانلود فایل")],
+            [KeyboardButton(text="📊 آمار من"), KeyboardButton(text="ℹ️ راهنما")]
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="👋 یک گزینه انتخاب کنید...",
+        selective=True
     )
-    
-    # Communication section
-    b.row(
-        make_button("📢 ارسال همگانی", "broadcast"),
-        make_button("⚙️ تنظیمات ربات", "settings")
-    )
-    
-    # Admin section
-    b.row(
-        make_button("👥 مدیریت کاربران", "users_list"),
-        make_button("👮 مدیریت ادمین‌ها", "admins_list")
-    )
-    
-    # Logs
-    b.row(make_button("📜 گزارشات و لاگ‌ها", "logs"))
-    
-    return b.as_markup()
 
-def back_kb(cb: str = "panel"):
-    """Back button with nice styling"""
+def back_button():
+    """Simple back button"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [make_button("🔙 بازگشت به منوی قبل", cb)]
+        [InlineKeyboardButton(text="🔙 بازگشت", callback_data="panel")]
     ])
 
-def back_and_skip_kb(back_cb: str = "panel"):
-    """Back button with skip option"""
+def skip_back_buttons(back_cb: str = "panel"):
+    """Skip and back buttons"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [make_button("⏭ رد کردن این مرحله", "skip_caption")],
-        [make_button("🔙 بازگشت", back_cb)]
+        [InlineKeyboardButton(text="⏭ رد کردن", callback_data="skip_caption")],
+        [InlineKeyboardButton(text="🔙 بازگشت", callback_data=back_cb)]
     ])
 
-def back_skip_pass_kb(back_cb: str = "panel"):
-    """Back button with skip for password"""
+def skip_pass_buttons(back_cb: str = "panel"):
+    """Skip password and back buttons"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [make_button("⏭ بدون رمز ادامه بده", "skip_password")],
-        [make_button("🔙 بازگشت", back_cb)]
+        [InlineKeyboardButton(text="⏭ بدون رمز", callback_data="skip_password")],
+        [InlineKeyboardButton(text="🔙 بازگشت", callback_data=back_cb)]
     ])
 
 def files_kb(files: Dict, page: int = 0):
-    """Files list with beautiful pagination"""
+    """Files list inline keyboard"""
     b = InlineKeyboardBuilder()
     items = list(files.items())
     per_page = 6
     total_pages = max(1, (len(items) + per_page - 1) // per_page)
     start = page * per_page
     
+    type_icons = {"photo": "🖼", "video": "🎬", "audio": "🎵", "voice": "🎤", "animation": "✨", "sticker": "🏷", "document": "📄"}
+    
     for fid, f in items[start:start+per_page]:
         cap = f.get("caption", "بدون کپشن")[:25]
         dn = f.get("downloads", 0)
         lock = "🔒" if f.get("password") else ""
-        file_type_icon = {
-            "photo": "🖼", "video": "🎬", "audio": "🎵",
-            "voice": "🎤", "animation": "✨", "sticker": "🏷",
-            "document": "📄"
-        }.get(f.get("type", "document"), "📁")
-        
-        b.row(make_button(
-            f"{file_type_icon} {lock} {cap} | 📥{dn}",
-            f"file_{fid}"
-        ))
+        icon = type_icons.get(f.get("type", "document"), "📁")
+        b.row(InlineKeyboardButton(text=f"{icon} {lock} {cap} | 📥{dn}", callback_data=f"file_{fid}"))
     
-    # Beautiful navigation
     if total_pages > 1:
-        nav_buttons = []
+        nav = []
         if page > 0:
-            nav_buttons.append(make_button("◀️ قبلی", f"files_pg_{page-1}"))
-        nav_buttons.append(make_button(f"📋 صفحه {page+1} از {total_pages}", "noop"))
+            nav.append(InlineKeyboardButton(text="◀️ قبلی", callback_data=f"files_pg_{page-1}"))
+        nav.append(InlineKeyboardButton(text=f"📋 {page+1}/{total_pages}", callback_data="noop"))
         if page < total_pages - 1:
-            nav_buttons.append(make_button("بعدی ▶️", f"files_pg_{page+1}"))
-        b.row(*nav_buttons)
+            nav.append(InlineKeyboardButton(text="بعدی ▶️", callback_data=f"files_pg_{page+1}"))
+        b.row(*nav)
     
-    b.row(make_button("🔙 بازگشت به پنل مدیریت", "panel"))
+    b.row(InlineKeyboardButton(text="🔙 بازگشت به منو", callback_data="panel"))
     return b.as_markup()
 
-def file_actions_kb(fid: str, has_password: bool = False):
-    """File actions with all options beautifully arranged"""
-    b = InlineKeyboardBuilder()
-    
-    b.row(
-        make_button("📥 دریافت فایل", f"dl_{fid}"),
-        make_button("🔗 کپی لینک دانلود", f"link_{fid}")
-    )
-    b.row(
-        make_button("✏️ ویرایش کپشن", f"editcap_{fid}"),
-        make_button("🔒 تغییر رمز عبور", f"setpass_{fid}")
-    )
-    b.row(make_button("🗑 حذف این فایل", f"del_{fid}"))
-    b.row(make_button("🔙 بازگشت به لیست فایل‌ها", "files_list"))
-    
-    return b.as_markup()
+def file_actions_kb(fid: str):
+    """File actions inline keyboard"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📥 دریافت فایل", callback_data=f"dl_{fid}"),
+         InlineKeyboardButton(text="🔗 کپی لینک", callback_data=f"link_{fid}")],
+        [InlineKeyboardButton(text="✏️ ویرایش کپشن", callback_data=f"editcap_{fid}"),
+         InlineKeyboardButton(text="🔒 تغییر رمز", callback_data=f"setpass_{fid}")],
+        [InlineKeyboardButton(text="🗑 حذف فایل", callback_data=f"del_{fid}")],
+        [InlineKeyboardButton(text="🔙 لیست فایل‌ها", callback_data="files_list")]
+    ])
 
 def confirm_delete_kb(fid: str):
-    """Delete confirmation with clear options"""
+    """Delete confirmation"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            make_button("✅ بله، حذف شود", f"delyes_{fid}"),
-            make_button("❌ خیر، منصرف شدم", f"file_{fid}")
-        ]
+        [InlineKeyboardButton(text="✅ بله حذف شود", callback_data=f"delyes_{fid}"),
+         InlineKeyboardButton(text="❌ منصرف شدم", callback_data=f"file_{fid}")]
     ])
 
 def users_kb(users: Dict, page: int = 0):
-    """Users list with beautiful layout"""
+    """Users list inline keyboard"""
     b = InlineKeyboardBuilder()
     items = list(users.items())
     per_page = 6
@@ -346,62 +316,54 @@ def users_kb(users: Dict, page: int = 0):
     
     for uid, u in items[start:start+per_page]:
         name = u.get("name", "کاربر")[:20]
-        ban_status = "🚫" if u.get("banned") else "✅"
-        b.row(make_button(
-            f"{ban_status} {name} | 📥{u.get('downloads',0)}",
-            f"user_{uid}"
-        ))
+        ban = "🚫" if u.get("banned") else "✅"
+        b.row(InlineKeyboardButton(text=f"{ban} {name} | 📥{u.get('downloads',0)}", callback_data=f"user_{uid}"))
     
     if total_pages > 1:
-        nav_buttons = []
+        nav = []
         if page > 0:
-            nav_buttons.append(make_button("◀️ قبلی", f"users_pg_{page-1}"))
-        nav_buttons.append(make_button(f"📋 {page+1}/{total_pages}", "noop"))
+            nav.append(InlineKeyboardButton(text="◀️", callback_data=f"users_pg_{page-1}"))
+        nav.append(InlineKeyboardButton(text=f"{page+1}/{total_pages}", callback_data="noop"))
         if page < total_pages - 1:
-            nav_buttons.append(make_button("بعدی ▶️", f"users_pg_{page+1}"))
-        b.row(*nav_buttons)
+            nav.append(InlineKeyboardButton(text="▶️", callback_data=f"users_pg_{page+1}"))
+        b.row(*nav)
     
-    b.row(make_button("🔙 بازگشت به پنل", "panel"))
+    b.row(InlineKeyboardButton(text="🔙 بازگشت", callback_data="panel"))
     return b.as_markup()
 
 def user_actions_kb(uid: str):
     """User actions"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [make_button("🚫 تغییر وضعیت مسدودیت", f"ban_{uid}")],
-        [make_button("📊 مشاهده آمار کاربر", f"user_stats_{uid}")],
-        [make_button("🔙 بازگشت به لیست کاربران", "users_list")]
+        [InlineKeyboardButton(text="🚫 تغییر وضعیت مسدودیت", callback_data=f"ban_{uid}")],
+        [InlineKeyboardButton(text="🔙 لیست کاربران", callback_data="users_list")]
     ])
 
 def admins_kb(admins: Dict):
-    """Admins list"""
+    """Admins management"""
     b = InlineKeyboardBuilder()
     for aid, a in admins.items():
-        role_icon = "👑" if a['role'] == 'owner' else "👮"
-        b.row(make_button(
-            f"{role_icon} {aid} - {a['role']}",
-            f"admin_{aid}"
-        ))
-    b.row(make_button("➕ افزودن ادمین جدید", "add_admin"))
-    b.row(make_button("🔙 بازگشت به پنل", "panel"))
+        icon = "👑" if a['role'] == 'owner' else "👮"
+        b.row(InlineKeyboardButton(text=f"{icon} {aid} - {a['role']}", callback_data=f"admin_{aid}"))
+    b.row(InlineKeyboardButton(text="➕ افزودن ادمین", callback_data="add_admin"))
+    b.row(InlineKeyboardButton(text="🔙 بازگشت", callback_data="panel"))
     return b.as_markup()
 
 def settings_kb(settings: Dict):
     """Settings menu"""
-    b = InlineKeyboardBuilder()
     timer = settings.get("delete_timer", 300) // 60
     log_ch = settings.get("log_channel", "تنظیم نشده")
-    
-    b.row(make_button(f"👋 ویرایش پیام خوشامد", "set_welcome"))
-    b.row(make_button(f"⏱ تایمر حذف فایل: {timer} دقیقه", "set_timer"))
-    b.row(make_button(f"📢 کانال گزارش: {log_ch}", "set_logchan"))
-    b.row(make_button("🔙 بازگشت به پنل", "panel"))
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="👋 پیام خوشامد", callback_data="set_welcome"))
+    b.row(InlineKeyboardButton(text=f"⏱ تایمر حذف: {timer} دقیقه", callback_data="set_timer"))
+    b.row(InlineKeyboardButton(text=f"📢 کانال گزارش: {log_ch}", callback_data="set_logchan"))
+    b.row(InlineKeyboardButton(text="🔙 بازگشت", callback_data="panel"))
     return b.as_markup()
 
-def download_notification_kb(file_id: str, user_id: int):
-    """Beautiful download notification for admin"""
+def download_notify_kb(file_id: str, user_id: int):
+    """Download notification buttons"""
     return InlineKeyboardMarkup(inline_keyboard=[
-        [make_button("📁 مشاهده فایل", f"file_{file_id}")],
-        [make_button("👤 پروفایل کاربر", f"user_{user_id}")]
+        [InlineKeyboardButton(text="📁 مشاهده فایل", callback_data=f"file_{file_id}"),
+         InlineKeyboardButton(text="👤 پروفایل کاربر", callback_data=f"user_{user_id}")]
     ])
 
 # ==================== STATES ====================
@@ -429,13 +391,12 @@ class PasswordState(StatesGroup):
 # ==================== ROUTER ====================
 router = Router()
 
-# ==================== START COMMAND ====================
+# ==================== START ====================
 @router.message(Command("start"))
 async def start_cmd(message: Message, state: FSMContext):
     user = message.from_user
     await db.add_user(user.id, {"name": user.first_name, "username": user.username})
     
-    # Check ban
     if await db.is_banned(user.id):
         await message.answer("🚫 شما مسدود شده‌اید.")
         return
@@ -445,36 +406,42 @@ async def start_cmd(message: Message, state: FSMContext):
         file_id = args[1]
         file_data = await db.get_file(file_id)
         if file_data:
-            # Check if file has password
             if file_data.get("password"):
                 await state.update_data(pending_file=file_id)
                 await state.set_state(PasswordState.waiting)
                 await message.answer(
-                    "🔒 این فایل دارای رمز عبور است.\n"
-                    "لطفا رمز عبور را وارد کنید:",
+                    "🔒 این فایل دارای رمز عبور است.\nلطفا رمز را وارد کنید:",
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                        [make_button("🔙 انصراف", callback_data="cancel_download")]
+                        [InlineKeyboardButton(text="🔙 انصراف", callback_data="cancel_download")]
                     ])
                 )
                 return
             else:
-                # Send file and notify admins
                 await send_file_to_user(message, file_data)
                 await notify_admins_download(message.bot, file_data, user)
                 return
         else:
-            await message.answer("❌ فایل پیدا نشد یا حذف شده است.")
+            await message.answer("❌ فایل پیدا نشد.")
             return
     
     settings = await db.get_settings()
-    await message.answer(settings.get("welcome", "👋 سلام!"))
+    
+    if await db.is_admin(user.id):
+        await message.answer(
+            settings.get("welcome", "👋 سلام!"),
+            reply_markup=admin_main_menu()
+        )
+    else:
+        await message.answer(
+            settings.get("welcome", "👋 سلام!"),
+            reply_markup=user_main_menu()
+        )
 
 @router.callback_query(F.data == "cancel_download")
 async def cancel_download(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.clear()
-    settings = await db.get_settings()
-    await callback.message.edit_text(settings.get("welcome", "👋 سلام!"))
+    await callback.message.edit_text("❌ دانلود لغو شد.")
 
 # ==================== PASSWORD CHECK ====================
 @router.message(PasswordState.waiting)
@@ -490,69 +457,46 @@ async def check_password(message: Message, state: FSMContext):
     
     if message.text == file_data.get("password", ""):
         await state.clear()
-        await message.answer("✅ رمز عبور صحیح است. در حال ارسال فایل...")
+        await message.answer("✅ رمز صحیح است. در حال ارسال...")
         await send_file_to_user(message, file_data)
-        # Notify admins about download
         await notify_admins_download(message.bot, file_data, message.from_user)
     else:
-        await message.answer(
-            "❌ رمز عبور اشتباه است.\n"
-            "لطفا دوباره تلاش کنید.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [make_button("🔙 انصراف", callback_data="cancel_download")]
-            ])
-        )
+        await message.answer("❌ رمز اشتباه است. دوباره تلاش کنید.")
 
 # ==================== DOWNLOAD NOTIFICATION ====================
 async def notify_admins_download(bot: Bot, file_data: Dict, user):
-    """Send download notification to all admins"""
     settings = await db.get_settings()
     log_channel = settings.get("log_channel", "")
     
-    # Get file info
     file_caption = file_data.get("caption", "بدون کپشن")
     file_id = file_data["id"]
-    file_type = file_data.get("type", "document")
     downloads = file_data.get("downloads", 0)
     
-    type_emoji = {
-        "photo": "🖼", "video": "🎬", "audio": "🎵",
-        "voice": "🎤", "animation": "✨", "sticker": "🏷",
-        "document": "📄"
-    }.get(file_type, "📁")
+    type_icons = {"photo": "🖼", "video": "🎬", "audio": "🎵", "voice": "🎤", "animation": "✨", "sticker": "🏷", "document": "📄"}
+    icon = type_icons.get(file_data.get("type", "document"), "📁")
     
-    notification_text = (
+    txt = (
         f"📥 **دانلود جدید**\n\n"
-        f"{type_emoji} فایل: {file_caption[:50]}\n"
-        f"🆔 شناسه: <code>{file_id}</code>\n"
-        f"📊 تعداد دانلود: {downloads}\n\n"
+        f"{icon} فایل: {file_caption[:50]}\n"
+        f"🆔: <code>{file_id}</code>\n"
+        f"📊 دانلود: {downloads}\n\n"
         f"👤 کاربر: {user.first_name}\n"
-        f"🆔 کاربر: <code>{user.id}</code>\n"
-        f"📎 یوزرنیم: @{user.username or 'ندارد'}\n"
-        f"⏰ زمان: {datetime.now().strftime('%H:%M:%S')}"
+        f"🆔: <code>{user.id}</code>\n"
+        f"📎 @{user.username or 'ندارد'}\n"
+        f"⏰ {datetime.now().strftime('%H:%M:%S')}"
     )
     
-    # Send to log channel
     if log_channel:
         try:
-            await bot.send_message(
-                chat_id=log_channel,
-                text=notification_text,
-                reply_markup=download_notification_kb(file_id, user.id)
-            )
-        except Exception as e:
-            logger.error(f"Failed to send to log channel: {e}")
+            await bot.send_message(chat_id=log_channel, text=txt, reply_markup=download_notify_kb(file_id, user.id))
+        except:
+            pass
     
-    # Send to all admins
     admins = await db.get_admins()
     for admin_id in admins.keys():
         try:
-            if admin_id != str(user.id):  # Don't notify if admin downloaded their own file
-                await bot.send_message(
-                    chat_id=int(admin_id),
-                    text=notification_text,
-                    reply_markup=download_notification_kb(file_id, user.id)
-                )
+            if admin_id != str(user.id):
+                await bot.send_message(chat_id=int(admin_id), text=txt, reply_markup=download_notify_kb(file_id, user.id))
         except:
             pass
 
@@ -584,20 +528,12 @@ async def send_file_to_user(message: Message, file_data: Dict):
             timer = (await db.get_settings()).get("delete_timer", 300)
             if timer > 0:
                 asyncio.create_task(auto_delete(sent, timer))
-        else:
-            raise Exception("No message sent")
-    
-    except Exception as e:
-        logger.error(f"Send error: {e}")
+    except:
         try:
             sent = await message.answer_document(fid, caption=cap)
             if sent:
                 await db.inc_download(file_data["id"])
-                timer = (await db.get_settings()).get("delete_timer", 300)
-                if timer > 0:
-                    asyncio.create_task(auto_delete(sent, timer))
-        except Exception as e2:
-            logger.error(f"Fallback error: {e2}")
+        except:
             await message.answer("❌ خطا در ارسال فایل.")
 
 async def auto_delete(msg: Message, delay: int):
@@ -607,57 +543,113 @@ async def auto_delete(msg: Message, delay: int):
     except:
         pass
 
-# ==================== ADMIN PANEL ====================
-@router.message(Command("admin"))
-@router.callback_query(F.data == "panel")
-async def admin_panel(event: Message | CallbackQuery):
-    if isinstance(event, CallbackQuery):
-        await event.answer()
-        msg = event.message
-        edit_mode = True
-    else:
-        msg = event
-        edit_mode = False
-    
-    if not await db.is_admin(msg.chat.id):
-        await msg.answer("⛔ دسترسی غیرمجاز")
+# ==================== REPLY KEYBOARD HANDLERS (منوی رنگی) ====================
+@router.message(F.text == "📤 آپلود فایل جدید")
+async def menu_upload(message: Message, state: FSMContext):
+    if not await db.is_admin(message.from_user.id):
         return
-    
-    text = (
-        "╭━━━━━━━━━━━━━━━━━━╮\n"
-        "┃   👑 **پنل مدیریت**   ┃\n"
-        "╰━━━━━━━━━━━━━━━━━━╯\n\n"
-        "به پنل مدیریت حرفه‌ای خوش آمدید!\n"
-        "از منوی زیر گزینه مورد نظر را انتخاب کنید."
-    )
-    
-    if edit_mode:
-        await msg.edit_text(text, reply_markup=panel_kb())
-    else:
-        await msg.answer(text, reply_markup=panel_kb())
-
-@router.callback_query(F.data == "noop")
-async def noop(callback: CallbackQuery):
-    await callback.answer()
-
-# ==================== UPLOAD ====================
-@router.callback_query(F.data == "upload")
-async def upload_start(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
     await state.set_state(UploadState.waiting)
-    await callback.message.edit_text(
-        "╭━━━━━━━━━━━━━━━━━━╮\n"
-        "┃  📤 **آپلود فایل جدید**  ┃\n"
-        "╰━━━━━━━━━━━━━━━━━━╯\n\n"
-        "📎 لطفا فایل خود را ارسال کنید.\n\n"
-        "✨ **فرمت‌های پشتیبانی شده:**\n"
-        "🖼 عکس | 🎬 ویدیو | 🎵 صوت\n"
-        "🎤 ویس | ✨ گیف | 🏷 استیکر\n"
-        "📄 فایل | 📦 ZIP | 📱 APK | 📕 PDF\n\n"
-        "📌 فقط یک فایل ارسال کنید.",
-        reply_markup=back_kb()
+    await message.answer(
+        "📤 **آپلود فایل جدید**\n\n"
+        "لطفا فایل خود را ارسال کنید.\n"
+        "🖼 عکس | 🎬 ویدیو | 🎵 صوت | 🎤 ویس\n"
+        "✨ گیف | 🏷 استیکر | 📄 فایل",
+        reply_markup=back_button()
     )
 
+@router.message(F.text == "📂 مدیریت فایل‌ها")
+async def menu_files(message: Message):
+    if not await db.is_admin(message.from_user.id):
+        return
+    files = await db.get_all_files()
+    if not files:
+        await message.answer("📂 فایلی آپلود نشده.", reply_markup=admin_main_menu())
+        return
+    await message.answer(f"📂 **فایل‌ها ({len(files)})**", reply_markup=files_kb(files))
+
+@router.message(F.text == "📊 آمار ربات")
+async def menu_stats(message: Message):
+    if not await db.is_admin(message.from_user.id):
+        return
+    s = await db.get_stats()
+    await message.answer(
+        f"📊 **آمار**\n\n👥 کاربران: {s['users']}\n📁 فایل‌ها: {s['files']}\n📥 دانلود: {s['downloads']}",
+        reply_markup=admin_main_menu()
+    )
+
+@router.message(F.text == "📢 ارسال همگانی")
+async def menu_broadcast(message: Message, state: FSMContext):
+    if not await db.is_admin(message.from_user.id):
+        return
+    await state.set_state(BroadcastState.waiting)
+    await message.answer("📢 پیام خود را برای ارسال همگانی بفرستید:", reply_markup=back_button())
+
+@router.message(F.text == "⚙️ تنظیمات")
+async def menu_settings(message: Message):
+    if not await db.is_admin(message.from_user.id):
+        return
+    s = await db.get_settings()
+    await message.answer("⚙️ **تنظیمات**", reply_markup=settings_kb(s))
+
+@router.message(F.text == "👥 کاربران")
+async def menu_users(message: Message):
+    if not await db.is_admin(message.from_user.id):
+        return
+    users = await db.get_all_users()
+    if not users:
+        await message.answer("👥 کاربری نیست.", reply_markup=admin_main_menu())
+        return
+    await message.answer(f"👥 **کاربران ({len(users)})**", reply_markup=users_kb(users))
+
+@router.message(F.text == "👮 ادمین‌ها")
+async def menu_admins(message: Message):
+    if not await db.is_admin(message.from_user.id):
+        return
+    admins = await db.get_admins()
+    txt = "👮 **ادمین‌ها:**\n"
+    for aid, a in admins.items():
+        txt += f"• <code>{aid}</code> - {a['role']}\n"
+    await message.answer(txt, reply_markup=admins_kb(admins))
+
+@router.message(F.text == "📜 گزارشات")
+async def menu_logs(message: Message):
+    if not await db.is_admin(message.from_user.id):
+        return
+    logs_list = await db.get_logs(20)
+    if not logs_list:
+        await message.answer("📜 گزارشی نیست.", reply_markup=admin_main_menu())
+        return
+    txt = "📜 **گزارشات:**\n\n"
+    for l in logs_list:
+        txt += f"<code>{l['time'][:19]}</code> {l['action']}\n"
+    await message.answer(txt[:4000], reply_markup=admin_main_menu())
+
+@router.message(F.text == "🔗 لینک‌های فعال")
+async def menu_links(message: Message):
+    if not await db.is_admin(message.from_user.id):
+        return
+    files = await db.get_all_files()
+    if not files:
+        await message.answer("🔗 لینکی نیست.", reply_markup=admin_main_menu())
+        return
+    bot = await message.bot.get_me()
+    txt = "🔗 **لینک‌ها:**\n\n"
+    for fid, f in list(files.items())[:10]:
+        txt += f"• {f.get('caption','')[:20]}\n  /start {fid}\n\n"
+    await message.answer(txt, reply_markup=admin_main_menu())
+
+@router.message(F.text == "💾 پشتیبان‌گیری")
+async def menu_backup(message: Message):
+    if not await db.is_admin(message.from_user.id):
+        return
+    import shutil
+    os.makedirs("backups", exist_ok=True)
+    fn = f"backups/backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    shutil.make_archive(fn.replace('.zip', ''), 'zip', '.', lambda x: x.endswith('.json'))
+    await message.answer_document(FSInputFile(fn), caption="✅ پشتیبان آماده شد")
+    await message.answer("💾 پشتیبان با موفقیت ساخته شد.", reply_markup=admin_main_menu())
+
+# ==================== UPLOAD FLOW ====================
 @router.message(UploadState.waiting)
 async def upload_receive(message: Message, state: FSMContext):
     file_id = None
@@ -691,55 +683,38 @@ async def upload_receive(message: Message, state: FSMContext):
         file_name = message.document.file_name or ""
     
     if not file_id:
-        await message.answer("❌ فایل معتبر نیست. لطفا دوباره تلاش کنید.")
+        await message.answer("❌ فایل معتبر نیست.")
         return
     
     await state.update_data(file_id=file_id, file_type=file_type, file_name=file_name)
     await state.set_state(UploadState.caption)
-    await message.answer(
-        "✅ **فایل با موفقیت دریافت شد!**\n\n"
-        "📝 حالا یک کپشن برای فایل بنویسید.\n"
-        "می‌توانید از دکمه رد کردن استفاده کنید.",
-        reply_markup=back_and_skip_kb()
-    )
+    await message.answer("✅ فایل دریافت شد! حالا کپشن را بفرستید:", reply_markup=skip_back_buttons())
 
 @router.callback_query(F.data == "skip_caption")
 async def skip_caption(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.update_data(caption="")
     await state.set_state(UploadState.password)
-    await callback.message.edit_text(
-        "🔒 **تنظیم رمز عبور**\n\n"
-        "آیا می‌خواهید برای فایل رمز عبور تعیین کنید؟\n"
-        "در صورت تمایل رمز را وارد کنید.",
-        reply_markup=back_skip_pass_kb()
-    )
+    await callback.message.edit_text("🔒 رمز عبور می‌خواهید؟", reply_markup=skip_pass_buttons())
 
 @router.message(UploadState.caption)
 async def upload_caption(message: Message, state: FSMContext):
-    caption = message.text or ""
-    await state.update_data(caption=caption)
+    await state.update_data(caption=message.text or "")
     await state.set_state(UploadState.password)
-    await message.answer(
-        "🔒 **تنظیم رمز عبور**\n\n"
-        "آیا می‌خواهید برای فایل رمز عبور تعیین کنید؟\n"
-        "در صورت تمایل رمز را وارد کنید.",
-        reply_markup=back_skip_pass_kb()
-    )
+    await message.answer("🔒 رمز عبور می‌خواهید؟", reply_markup=skip_pass_buttons())
 
 @router.callback_query(F.data == "skip_password")
 async def skip_password(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.update_data(password="")
-    await finalize_upload(callback.message, state)
+    await finalize_upload(callback.message, state, callback.from_user.id)
 
 @router.message(UploadState.password)
 async def upload_password(message: Message, state: FSMContext):
-    password = message.text or ""
-    await state.update_data(password=password)
-    await finalize_upload(message, state)
+    await state.update_data(password=message.text or "")
+    await finalize_upload(message, state, message.from_user.id)
 
-async def finalize_upload(message: Message, state: FSMContext):
+async def finalize_upload(message: Message, state: FSMContext, admin_id: int):
     data = await state.get_data()
     fid = str(uuid.uuid4())[:8]
     
@@ -750,76 +725,61 @@ async def finalize_upload(message: Message, state: FSMContext):
         "caption": data.get("caption", ""),
         "file_name": data.get("file_name", ""),
         "password": data.get("password", ""),
-        "admin": message.from_user.id if hasattr(message, 'from_user') else message.chat.id
+        "admin": admin_id
     })
-    await db.add_log("upload", message.from_user.id if hasattr(message, 'from_user') else message.chat.id, f"Uploaded {fid}")
+    await db.add_log("upload", admin_id, f"Uploaded {fid}")
     
     bot = await message.bot.get_me()
     link = f"https://t.me/{bot.username}?start={fid}"
     
-    lock_status = "🔒 دارای رمز" if data.get("password") else "🔓 بدون رمز"
-    file_type_emoji = {
-        "photo": "🖼", "video": "🎬", "audio": "🎵",
-        "voice": "🎤", "animation": "✨", "sticker": "🏷",
-        "document": "📄"
-    }.get(data.get("file_type", "document"), "📁")
+    type_icons = {"photo": "🖼", "video": "🎬", "audio": "🎵", "voice": "🎤", "animation": "✨", "sticker": "🏷", "document": "📄"}
+    icon = type_icons.get(data.get("file_type", "document"), "📁")
+    lock = "🔒 دارد" if data.get("password") else "🔓 ندارد"
     
-    success_text = (
-        "╭━━━━━━━━━━━━━━━━━━╮\n"
-        "┃  ✅ **آپلود موفقیت‌آمیز**  ┃\n"
-        "╰━━━━━━━━━━━━━━━━━━╯\n\n"
-        f"{file_type_emoji} **فایل با موفقیت ذخیره شد**\n\n"
-        f"🆔 شناسه فایل:\n<code>{fid}</code>\n\n"
-        f"📝 کپشن: {data.get('caption') or 'بدون کپشن'}\n"
-        f"{lock_status}\n"
+    txt = (
+        f"✅ **آپلود موفق!**\n\n"
+        f"{icon} فایل آپلود شد\n"
+        f"🆔: <code>{fid}</code>\n"
+        f"📝: {data.get('caption') or 'بدون کپشن'}\n"
+        f"{lock}\n"
     )
-    
     if data.get("password"):
-        success_text += f"🔑 رمز عبور: <code>{data.get('password')}</code>\n\n"
+        txt += f"🔑 رمز: <code>{data.get('password')}</code>\n\n"
     
-    success_text += (
+    txt += (
         f"🔗 **لینک دانلود:**\n"
-        f"<a href='{link}'>📎 برای دانلود کلیک کنید</a>\n\n"
-        f"<code>{link}</code>\n\n"
-        f"📌 این لینک را برای کاربران ارسال کنید."
+        f"<a href='{link}'>📎 کلیک کنید</a>\n"
+        f"<code>{link}</code>"
     )
     
-    await message.answer(success_text, reply_markup=panel_kb())
+    await message.answer(txt, reply_markup=admin_main_menu())
     await state.clear()
 
-# ==================== FILES LIST & ACTIONS ====================
+# ==================== INLINE CALLBACKS ====================
+@router.callback_query(F.data == "panel")
+async def panel_callback(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.answer("👑 پنل مدیریت:", reply_markup=admin_main_menu())
+
+@router.callback_query(F.data == "noop")
+async def noop(callback: CallbackQuery):
+    await callback.answer()
+
 @router.callback_query(F.data == "files_list")
-async def files_list(callback: CallbackQuery):
+async def files_list_cb(callback: CallbackQuery):
     await callback.answer()
     files = await db.get_all_files()
     if not files:
-        await callback.message.edit_text(
-            "📂 **فایل‌ها**\n\n"
-            "هنوز هیچ فایلی آپلود نشده است!\n"
-            "از دکمه آپلود برای اضافه کردن فایل استفاده کنید.",
-            reply_markup=panel_kb()
-        )
+        await callback.message.edit_text("📂 فایلی نیست.", reply_markup=admin_main_menu())
         return
-    
-    total_downloads = sum(f["downloads"] for f in files.values())
-    
-    await callback.message.edit_text(
-        f"📂 **فایل‌های آپلود شده**\n\n"
-        f"📁 تعداد فایل‌ها: {len(files)}\n"
-        f"📥 مجموع دانلودها: {total_downloads}\n\n"
-        f"🔒 = دارای رمز | 🔓 = بدون رمز",
-        reply_markup=files_kb(files)
-    )
+    await callback.message.edit_text(f"📂 فایل‌ها ({len(files)})", reply_markup=files_kb(files))
 
 @router.callback_query(F.data.startswith("files_pg_"))
 async def files_page(callback: CallbackQuery):
     await callback.answer()
     page = int(callback.data.replace("files_pg_", ""))
     files = await db.get_all_files()
-    await callback.message.edit_text(
-        f"📂 **فایل‌ها** (صفحه {page+1}):",
-        reply_markup=files_kb(files, page)
-    )
+    await callback.message.edit_text(f"📂 فایل‌ها (صفحه {page+1})", reply_markup=files_kb(files, page))
 
 @router.callback_query(F.data.startswith("file_"))
 async def file_info(callback: CallbackQuery):
@@ -827,32 +787,22 @@ async def file_info(callback: CallbackQuery):
     fid = callback.data.replace("file_", "")
     f = await db.get_file(fid)
     if not f:
-        await callback.answer("❌ فایل پیدا نشد.", show_alert=True)
+        await callback.answer("❌ پیدا نشد", show_alert=True)
         return
-    
     lock = "🔒 دارد" if f.get("password") else "🔓 ندارد"
-    file_type_emoji = {
-        "photo": "🖼", "video": "🎬", "audio": "🎵",
-        "voice": "🎤", "animation": "✨", "sticker": "🏷",
-        "document": "📄"
-    }.get(f.get("type", "document"), "📁")
-    
     txt = (
-        "╭━━━━━━━━━━━━━━━━━━╮\n"
-        f"┃  {file_type_emoji} **اطلاعات فایل**   ┃\n"
-        "╰━━━━━━━━━━━━━━━━━━╯\n\n"
-        f"🆔 شناسه: <code>{f['id']}</code>\n"
-        f"📝 کپشن: {f.get('caption') or 'بدون کپشن'}\n"
-        f"📄 نام فایل: {f.get('file_name') or 'نامشخص'}\n"
-        f"🔒 وضعیت رمز: {lock}\n"
-        f"📥 تعداد دانلود: {f['downloads']} بار\n"
-        f"📅 تاریخ آپلود: {f['date'][:10]}\n"
+        f"📁 **اطلاعات فایل**\n\n"
+        f"🆔: <code>{fid}</code>\n"
+        f"📝: {f.get('caption','')}\n"
+        f"📥: {f['downloads']}\n"
+        f"{lock}\n"
+        f"📅: {f['date'][:10]}"
     )
-    await callback.message.edit_text(txt, reply_markup=file_actions_kb(fid, bool(f.get("password"))))
+    await callback.message.edit_text(txt, reply_markup=file_actions_kb(fid))
 
 @router.callback_query(F.data.startswith("dl_"))
-async def download_file(callback: CallbackQuery):
-    await callback.answer("📥 در حال ارسال فایل...")
+async def dl_file(callback: CallbackQuery):
+    await callback.answer("📥 در حال ارسال...")
     fid = callback.data.replace("dl_", "")
     f = await db.get_file(fid)
     if f:
@@ -860,152 +810,97 @@ async def download_file(callback: CallbackQuery):
         await notify_admins_download(callback.bot, f, callback.from_user)
 
 @router.callback_query(F.data.startswith("link_"))
-async def get_file_link(callback: CallbackQuery):
+async def get_link(callback: CallbackQuery):
     await callback.answer()
     fid = callback.data.replace("link_", "")
     f = await db.get_file(fid)
     if not f:
-        await callback.answer("❌ فایل پیدا نشد.", show_alert=True)
+        await callback.answer("❌ پیدا نشد", show_alert=True)
         return
-    
     bot = await callback.bot.get_me()
     link = f"https://t.me/{bot.username}?start={fid}"
-    
-    password_text = f"\n🔑 رمز عبور: <code>{f['password']}</code>" if f.get("password") else ""
-    
-    link_text = (
-        "╭━━━━━━━━━━━━━━━━━━╮\n"
-        "┃  🔗 **لینک دانلود فایل**  ┃\n"
-        "╰━━━━━━━━━━━━━━━━━━╯\n\n"
-        f"📎 <a href='{link}'>برای دانلود کلیک کنید</a>\n\n"
-        f"<code>{link}</code>\n"
-        f"{password_text}\n\n"
-        f"📌 این لینک را کپی کرده و برای دیگران ارسال کنید."
-    )
-    
-    await callback.message.answer(link_text)
+    pw = f"\n🔑 رمز: <code>{f['password']}</code>" if f.get("password") else ""
+    await callback.message.answer(f"🔗 <a href='{link}'>کلیک کنید</a>\n<code>{link}</code>{pw}")
 
 @router.callback_query(F.data.startswith("editcap_"))
-async def edit_caption_start(callback: CallbackQuery, state: FSMContext):
+async def edit_cap_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     fid = callback.data.replace("editcap_", "")
     await state.update_data(edit_fid=fid)
     await state.set_state(EditState.waiting_caption)
-    await callback.message.edit_text(
-        "✏️ **ویرایش کپشن**\n\n"
-        "لطفا کپشن جدید را وارد کنید:",
-        reply_markup=back_kb(f"file_{fid}")
-    )
+    await callback.message.edit_text("✏️ کپشن جدید را بفرستید:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 بازگشت", callback_data=f"file_{fid}")]
+    ]))
 
 @router.message(EditState.waiting_caption)
-async def edit_caption_save(message: Message, state: FSMContext):
+async def edit_cap_save(message: Message, state: FSMContext):
     data = await state.get_data()
     fid = data.get("edit_fid")
     if fid:
         await db.update_caption(fid, message.text)
-        await db.add_log("edit", message.from_user.id, f"Edited caption {fid}")
-        await message.answer("✅ کپشن با موفقیت ویرایش شد.", reply_markup=panel_kb())
+        await message.answer("✅ کپشن ویرایش شد.", reply_markup=admin_main_menu())
     await state.clear()
 
 @router.callback_query(F.data.startswith("setpass_"))
-async def set_password_start(callback: CallbackQuery, state: FSMContext):
+async def set_pass_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     fid = callback.data.replace("setpass_", "")
-    f = await db.get_file(fid)
-    current = f.get("password", "") if f else ""
-    
     await state.update_data(edit_fid=fid)
     await state.set_state(EditState.waiting_password)
-    
-    await callback.message.edit_text(
-        f"🔒 **تغییر رمز عبور**\n\n"
-        f"رمز فعلی: {current or 'ندارد'}\n\n"
-        "رمز جدید را وارد کنید.\n"
-        "برای حذف رمز، کلمه remove را بفرستید.",
-        reply_markup=back_kb(f"file_{fid}")
-    )
+    await callback.message.edit_text("🔒 رمز جدید (remove برای حذف):", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 بازگشت", callback_data=f"file_{fid}")]
+    ]))
 
 @router.message(EditState.waiting_password)
-async def set_password_save(message: Message, state: FSMContext):
+async def set_pass_save(message: Message, state: FSMContext):
     data = await state.get_data()
     fid = data.get("edit_fid")
     if fid:
-        new_pass = "" if message.text.lower() == "remove" else message.text
-        await db.update_password(fid, new_pass)
-        await db.add_log("edit", message.from_user.id, f"Changed password for {fid}")
-        
-        if new_pass:
-            await message.answer(f"✅ رمز عبور تنظیم شد: <code>{new_pass}</code>", reply_markup=panel_kb())
-        else:
-            await message.answer("✅ رمز عبور حذف شد.", reply_markup=panel_kb())
+        p = "" if message.text.lower() == "remove" else message.text
+        await db.update_password(fid, p)
+        await message.answer(f"✅ رمز {'حذف' if not p else 'تنظیم'} شد.", reply_markup=admin_main_menu())
     await state.clear()
 
 @router.callback_query(F.data.startswith("del_"))
-async def delete_file_confirm(callback: CallbackQuery):
+async def del_confirm(callback: CallbackQuery):
     await callback.answer()
     fid = callback.data.replace("del_", "")
-    await callback.message.edit_text(
-        "⚠️ **هشدار حذف فایل**\n\n"
-        "آیا از حذف این فایل اطمینان دارید؟\n"
-        "این عمل قابل بازگشت نیست و لینک فایل از کار می‌افتد.",
-        reply_markup=confirm_delete_kb(fid)
-    )
+    await callback.message.edit_text("⚠️ حذف شود؟", reply_markup=confirm_delete_kb(fid))
 
 @router.callback_query(F.data.startswith("delyes_"))
-async def delete_file_exec(callback: CallbackQuery):
+async def del_exec(callback: CallbackQuery):
     fid = callback.data.replace("delyes_", "")
     if await db.delete_file(fid):
-        await db.add_log("delete", callback.from_user.id, f"Deleted {fid}")
-        await callback.answer("✅ فایل با موفقیت حذف شد.")
-        await files_list(callback)
+        await callback.answer("✅ حذف شد")
+        await files_list_cb(callback)
     else:
-        await callback.answer("❌ خطا در حذف فایل.", show_alert=True)
+        await callback.answer("❌ خطا", show_alert=True)
 
-# ==================== USERS ====================
 @router.callback_query(F.data == "users_list")
-async def users_list(callback: CallbackQuery):
+async def users_list_cb(callback: CallbackQuery):
     await callback.answer()
     users = await db.get_all_users()
     if not users:
-        await callback.message.edit_text(
-            "👥 **کاربران**\n\n"
-            "هنوز هیچ کاربری ثبت نام نکرده است.",
-            reply_markup=panel_kb()
-        )
+        await callback.message.edit_text("👥 کاربری نیست.", reply_markup=admin_main_menu())
         return
-    await callback.message.edit_text(
-        f"👥 **کاربران ثبت نام شده** ({len(users)} نفر):",
-        reply_markup=users_kb(users)
-    )
+    await callback.message.edit_text(f"👥 کاربران ({len(users)})", reply_markup=users_kb(users))
 
 @router.callback_query(F.data.startswith("users_pg_"))
 async def users_page(callback: CallbackQuery):
     await callback.answer()
     page = int(callback.data.replace("users_pg_", ""))
     users = await db.get_all_users()
-    await callback.message.edit_text(f"👥 **کاربران** (صفحه {page+1}):", reply_markup=users_kb(users, page))
+    await callback.message.edit_text(f"👥 کاربران (صفحه {page+1})", reply_markup=users_kb(users, page))
 
 @router.callback_query(F.data.startswith("user_"))
-async def user_info(callback: CallbackQuery):
+async def user_info_cb(callback: CallbackQuery):
     await callback.answer()
     uid = callback.data.replace("user_", "")
-    users = await db.get_all_users()
-    u = users.get(uid)
+    u = (await db.get_all_users()).get(uid)
     if not u:
-        await callback.answer("❌ کاربر پیدا نشد.", show_alert=True)
+        await callback.answer("❌ پیدا نشد", show_alert=True)
         return
-    
-    txt = (
-        "╭━━━━━━━━━━━━━━━━━━╮\n"
-        "┃  👤 **اطلاعات کاربر**   ┃\n"
-        "╰━━━━━━━━━━━━━━━━━━╯\n\n"
-        f"🆔 شناسه: <code>{uid}</code>\n"
-        f"👤 نام: {u.get('name', 'نامشخص')}\n"
-        f"📎 یوزرنیم: @{u.get('username') or 'ندارد'}\n"
-        f"📥 تعداد دانلود: {u.get('downloads', 0)}\n"
-        f"🚫 وضعیت: {'مسدود' if u.get('banned') else 'آزاد'}\n"
-        f"📅 تاریخ عضویت: {u.get('joined', '')[:10]}\n"
-    )
+    txt = f"👤 {u.get('name')}\n🆔: <code>{uid}</code>\n📥: {u.get('downloads',0)}\n🚫: {'مسدود' if u.get('banned') else 'آزاد'}"
     await callback.message.edit_text(txt, reply_markup=user_actions_kb(uid))
 
 @router.callback_query(F.data.startswith("ban_"))
@@ -1013,32 +908,14 @@ async def toggle_ban(callback: CallbackQuery):
     await callback.answer()
     uid = callback.data.replace("ban_", "")
     result = await db.toggle_ban(int(uid))
-    await db.add_log("ban", callback.from_user.id, f"Toggled ban for {uid}")
     await callback.answer(result)
-    await user_info(callback)
+    await user_info_cb(callback)
 
-@router.callback_query(F.data.startswith("user_stats_"))
-async def user_stats(callback: CallbackQuery):
-    await callback.answer()
-    uid = callback.data.replace("user_stats_", "")
-    users = await db.get_all_users()
-    u = users.get(uid)
-    if u:
-        await callback.answer(
-            f"📊 {u.get('name')}: {u.get('downloads', 0)} دانلود",
-            show_alert=True
-        )
-
-# ==================== ADMINS ====================
 @router.callback_query(F.data == "admins_list")
-async def admins_list(callback: CallbackQuery):
+async def admins_list_cb(callback: CallbackQuery):
     await callback.answer()
     admins = await db.get_admins()
-    txt = (
-        "╭━━━━━━━━━━━━━━━━━━╮\n"
-        "┃  👮 **لیست ادمین‌ها**   ┃\n"
-        "╰━━━━━━━━━━━━━━━━━━╯\n\n"
-    )
+    txt = "👮 ادمین‌ها:\n"
     for aid, a in admins.items():
         txt += f"• <code>{aid}</code> - {a['role']}\n"
     await callback.message.edit_text(txt, reply_markup=admins_kb(admins))
@@ -1047,200 +924,112 @@ async def admins_list(callback: CallbackQuery):
 async def add_admin_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(SettingsState.waiting_admin_id)
-    await callback.message.edit_text(
-        "➕ **افزودن ادمین جدید**\n\n"
-        "لطفا آیدی عددی ادمین جدید را ارسال کنید:",
-        reply_markup=back_kb("admins_list")
-    )
+    await callback.message.edit_text("➕ آیدی عددی ادمین جدید:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 بازگشت", callback_data="admins_list")]
+    ]))
 
 @router.message(SettingsState.waiting_admin_id)
 async def add_admin_save(message: Message, state: FSMContext):
     try:
         uid = int(message.text)
         await db.add_admin(uid)
-        await db.add_log("admin_add", message.from_user.id, f"Added admin {uid}")
-        await message.answer(f"✅ ادمین <code>{uid}</code> با موفقیت اضافه شد.", reply_markup=panel_kb())
+        await message.answer(f"✅ ادمین <code>{uid}</code> اضافه شد.", reply_markup=admin_main_menu())
     except:
-        await message.answer("❌ لطفا یک آیدی عددی معتبر وارد کنید.")
+        await message.answer("❌ آیدی معتبر نیست.")
     await state.clear()
 
 @router.callback_query(F.data.startswith("admin_"))
-async def admin_action(callback: CallbackQuery):
+async def remove_admin_cb(callback: CallbackQuery):
     await callback.answer()
     aid = callback.data.replace("admin_", "")
     if aid == str(ADMIN_ID):
-        await callback.answer("❌ نمی‌توانید مالک اصلی را حذف کنید.", show_alert=True)
+        await callback.answer("❌ مالک حذف نمی‌شود.", show_alert=True)
         return
     if await db.remove_admin(int(aid)):
-        await db.add_log("admin_remove", callback.from_user.id, f"Removed {aid}")
-        await callback.answer("✅ ادمین حذف شد.")
-    else:
-        await callback.answer("❌ خطا در حذف ادمین.", show_alert=True)
-    await admins_list(callback)
-
-# ==================== STATS ====================
-@router.callback_query(F.data == "stats")
-async def stats(callback: CallbackQuery):
-    await callback.answer()
-    s = await db.get_stats()
-    await callback.message.edit_text(
-        "╭━━━━━━━━━━━━━━━━━━╮\n"
-        "┃  📊 **آمار و اطلاعات**   ┃\n"
-        "╰━━━━━━━━━━━━━━━━━━╯\n\n"
-        f"👥 تعداد کاربران: {s['users']}\n"
-        f"📁 تعداد فایل‌ها: {s['files']}\n"
-        f"📥 مجموع دانلودها: {s['downloads']}\n\n"
-        f"📌 بروزرسانی: {datetime.now().strftime('%H:%M:%S')}",
-        reply_markup=panel_kb()
-    )
-
-# ==================== SETTINGS ====================
-@router.callback_query(F.data == "settings")
-async def settings_menu(callback: CallbackQuery):
-    await callback.answer()
-    s = await db.get_settings()
-    await callback.message.edit_text(
-        "╭━━━━━━━━━━━━━━━━━━╮\n"
-        "┃  ⚙️ **تنظیمات ربات**   ┃\n"
-        "╰━━━━━━━━━━━━━━━━━━╯",
-        reply_markup=settings_kb(s)
-    )
+        await callback.answer("✅ حذف شد")
+    await admins_list_cb(callback)
 
 @router.callback_query(F.data == "set_welcome")
 async def set_welcome(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(SettingsState.waiting_welcome)
-    await callback.message.edit_text(
-        "👋 **ویرایش پیام خوشامد**\n\n"
-        "لطفا متن پیام خوشامد جدید را وارد کنید:",
-        reply_markup=back_kb("settings")
-    )
+    await callback.message.edit_text("👋 پیام خوشامد جدید:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 بازگشت", callback_data="settings")]
+    ]))
 
 @router.message(SettingsState.waiting_welcome)
 async def save_welcome(message: Message, state: FSMContext):
     await db.update_setting("welcome", message.text)
-    await db.add_log("settings", message.from_user.id, "Updated welcome")
-    await message.answer("✅ پیام خوشامد با موفقیت ذخیره شد.", reply_markup=panel_kb())
+    await message.answer("✅ ذخیره شد.", reply_markup=admin_main_menu())
     await state.clear()
 
 @router.callback_query(F.data == "set_timer")
 async def set_timer(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(SettingsState.waiting_timer)
-    await callback.message.edit_text(
-        "⏱ **تنظیم تایمر حذف فایل**\n\n"
-        "لطفا زمان را به دقیقه وارد کنید:\n"
-        "0 = غیرفعال | 1-60 دقیقه\n\n"
-        "پیش‌فرض: 5 دقیقه",
-        reply_markup=back_kb("settings")
-    )
+    await callback.message.edit_text("⏱ زمان (دقیقه):", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 بازگشت", callback_data="settings")]
+    ]))
 
 @router.message(SettingsState.waiting_timer)
 async def save_timer(message: Message, state: FSMContext):
     try:
-        mins = int(message.text)
-        if 0 <= mins <= 60:
-            await db.update_setting("delete_timer", mins * 60)
-            await db.add_log("settings", message.from_user.id, f"Timer set to {mins}m")
-            await message.answer(f"✅ تایمر روی {mins} دقیقه تنظیم شد.", reply_markup=panel_kb())
-        else:
-            await message.answer("❌ عدد باید بین 0 تا 60 باشد.")
-            return
+        m = int(message.text)
+        if 0 <= m <= 60:
+            await db.update_setting("delete_timer", m*60)
+            await message.answer(f"✅ {m} دقیقه.", reply_markup=admin_main_menu())
     except:
-        await message.answer("❌ لطفا یک عدد معتبر وارد کنید.")
+        await message.answer("❌ عدد معتبر نیست.")
     await state.clear()
 
 @router.callback_query(F.data == "set_logchan")
 async def set_logchan(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(SettingsState.waiting_logchan)
-    await callback.message.edit_text(
-        "📢 **تنظیم کانال گزارش**\n\n"
-        "لطفا آیدی کانال یا گروه را ارسال کنید.\n"
-        "مثال: @channel یا -100123456\n\n"
-        "گزارش دانلودها به این کانال ارسال می‌شود.",
-        reply_markup=back_kb("settings")
-    )
+    await callback.message.edit_text("📢 آیدی کانال:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 بازگشت", callback_data="settings")]
+    ]))
 
 @router.message(SettingsState.waiting_logchan)
 async def save_logchan(message: Message, state: FSMContext):
     await db.update_setting("log_channel", message.text)
-    await db.add_log("settings", message.from_user.id, f"Log channel set to {message.text}")
-    await message.answer(f"✅ کانال گزارش تنظیم شد: {message.text}", reply_markup=panel_kb())
+    await message.answer(f"✅ تنظیم شد.", reply_markup=admin_main_menu())
     await state.clear()
 
-# ==================== BROADCAST ====================
-@router.callback_query(F.data == "broadcast")
-async def broadcast_start(callback: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data == "settings")
+async def settings_cb(callback: CallbackQuery):
     await callback.answer()
-    await state.set_state(BroadcastState.waiting)
-    await callback.message.edit_text(
-        "📢 **ارسال همگانی**\n\n"
-        "لطفا پیام خود را ارسال کنید.\n"
-        "می‌توانید متن، عکس، ویدیو یا هر فایلی بفرستید.\n\n"
-        "⚠️ این پیام برای همه کاربران ارسال خواهد شد.",
-        reply_markup=back_kb()
-    )
+    s = await db.get_settings()
+    await callback.message.edit_text("⚙️ تنظیمات", reply_markup=settings_kb(s))
 
+# ==================== BROADCAST ====================
 @router.message(BroadcastState.waiting)
 async def broadcast_send(message: Message, state: FSMContext):
+    if message.text == "/cancel":
+        await state.clear()
+        await message.answer("❌ لغو شد.", reply_markup=admin_main_menu())
+        return
+    
     users = await db.get_all_users()
     total = len(users)
     sent = 0
     failed = 0
     
-    progress = await message.answer(f"📢 در حال ارسال به {total} کاربر...\n0%")
+    prog = await message.answer(f"📢 0/{total}")
     
     for i, uid in enumerate(users.keys()):
         try:
-            await message.copy_to(chat_id=int(uid))
+            await message.copy_to(int(uid))
             sent += 1
         except:
             failed += 1
-        
-        if (i + 1) % 20 == 0:
-            pct = int((i+1)/total*100)
-            try:
-                await progress.edit_text(f"📢 در حال ارسال...\n{i+1}/{total} ({pct}%)")
-            except:
-                pass
+        if (i+1) % 20 == 0:
+            await prog.edit_text(f"📢 {i+1}/{total}")
         await asyncio.sleep(0.05)
     
-    await db.add_log("broadcast", message.from_user.id, f"Sent to {sent}/{total}")
-    await progress.edit_text(
-        "╭━━━━━━━━━━━━━━━━━━╮\n"
-        "┃  ✅ **ارسال پایان یافت**  ┃\n"
-        "╰━━━━━━━━━━━━━━━━━━╯\n\n"
-        f"✅ موفق: {sent}\n"
-        f"❌ ناموفق: {failed}\n"
-        f"📊 مجموع: {total}\n\n"
-        f"📈成功率: {int(sent/total*100) if total > 0 else 0}%",
-        reply_markup=panel_kb()
-    )
+    await prog.edit_text(f"✅ {sent}/{total}\n❌ {failed}", reply_markup=admin_main_menu())
+    await db.add_log("broadcast", message.from_user.id, f"Sent {sent}/{total}")
     await state.clear()
-
-# ==================== LOGS ====================
-@router.callback_query(F.data == "logs")
-async def logs(callback: CallbackQuery):
-    await callback.answer()
-    logs_list = await db.get_logs(20)
-    if not logs_list:
-        await callback.message.edit_text("📜 هیچ گزارشی ثبت نشده.", reply_markup=panel_kb())
-        return
-    
-    txt = (
-        "╭━━━━━━━━━━━━━━━━━━╮\n"
-        "┃  📜 **گزارشات ربات**   ┃\n"
-        "╰━━━━━━━━━━━━━━━━━━╯\n\n"
-    )
-    for l in logs_list:
-        txt += f"<code>{l['time'][:19]}</code>\n"
-        txt += f"📌 {l['action']} | ادمین: {l['admin']}\n"
-        if l.get('detail'):
-            txt += f"  ↳ {l['detail'][:50]}\n"
-        txt += "─" * 20 + "\n"
-    
-    await callback.message.edit_text(txt[:4000], reply_markup=panel_kb())
 
 # ==================== MAIN ====================
 async def on_startup(bot: Bot):
@@ -1251,17 +1040,16 @@ async def on_startup(bot: Bot):
         await db._write(ADMINS_FILE, d)
     
     await bot.set_my_commands([
-        BotCommand(command="start", description="🚀 شروع ربات"),
+        BotCommand(command="start", description="🚀 شروع"),
         BotCommand(command="admin", description="👑 پنل مدیریت")
     ])
-    logger.info("Bot started successfully!")
+    logger.info("Bot started!")
 
 async def main():
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher(storage=MemoryStorage())
     dp.include_router(router)
     dp.startup.register(on_startup)
-    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
