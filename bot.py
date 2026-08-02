@@ -23,7 +23,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup,
-    InlineKeyboardButton, FSInputFile
+    InlineKeyboardButton, FSInputFile, BotCommand
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
@@ -33,7 +33,7 @@ import aiofiles
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
-BOT_USERNAME = os.getenv("BOT_USERNAME", "YourBot")
+BOT_USERNAME = os.getenv("BOT_USERNAME", "")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
 USERS_FILE = "users.json"
@@ -1219,7 +1219,10 @@ async def on_startup(bot: Bot):
     logger.info("Bot starting...")
     db.initialize_files()
     await db.add_admin_if_not_exists(ADMIN_ID, "owner")
-    await bot.set_my_commands([("start", "Start"), ("admin", "Admin panel")])
+    await bot.set_my_commands([
+        BotCommand(command="start", description="Start"),
+        BotCommand(command="admin", description="Admin panel")
+    ])
     try:
         await bot.send_message(ADMIN_ID, "✅ Bot started!")
     except:
@@ -1234,14 +1237,6 @@ async def main():
     dp.include_router(router)
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
-
-    # Manual flood check for all messages
-    @dp.message()
-    async def flood_check(message: Message, **kwargs):
-        if not await flood.check(message.from_user.id):
-            return
-        # If message has no other handler, ignore
-        pass
 
     try:
         await dp.start_polling(bot)
