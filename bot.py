@@ -1,7 +1,7 @@
 """
-Telegram File Uploader Bot - v10.3 Professional
+Telegram File Uploader Bot - v11.0 Professional
 Aiogram 3.x | JSON Storage | Railway Ready
-Forward Lock (Protect Content) | Toggle in Settings | Full Control
+Enhanced Statistics | Force Join Stats | Table Display | Active Users
 """
 
 import asyncio
@@ -69,6 +69,48 @@ def format_time(minutes: int) -> str:
         h = (minutes % 1440) // 60
         return f"{d} روز و {h} ساعت" if h > 0 else f"{d} روز"
 
+def format_number(num: int) -> str:
+    """Format large numbers with commas"""
+    return f"{num:,}"
+
+def make_table(rows: List[List[str]], headers: List[str] = None) -> str:
+    """Create a beautiful table for Telegram"""
+    result = ""
+    
+    # Calculate column widths
+    col_widths = [0] * len(rows[0])
+    if headers:
+        for i, h in enumerate(headers):
+            col_widths[i] = max(col_widths[i], len(h) + 4)
+    for row in rows:
+        for i, cell in enumerate(row):
+            col_widths[i] = max(col_widths[i], len(str(cell)) + 4)
+    
+    # Top border
+    result += "┌" + "┬".join("─" * w for w in col_widths) + "┐\n"
+    
+    # Headers
+    if headers:
+        result += "│"
+        for i, h in enumerate(headers):
+            result += f"{h:^{col_widths[i]}}│"
+        result += "\n"
+        result += "├" + "┼".join("─" * w for w in col_widths) + "┤\n"
+    
+    # Rows
+    for idx, row in enumerate(rows):
+        result += "│"
+        for i, cell in enumerate(row):
+            result += f"{str(cell):^{col_widths[i]}}│"
+        result += "\n"
+        if idx < len(rows) - 1 and not headers:
+            result += "├" + "┼".join("─" * w for w in col_widths) + "┤\n"
+    
+    # Bottom border
+    result += "└" + "┴".join("─" * w for w in col_widths) + "┘"
+    
+    return f"<pre>{result}</pre>"
+
 def get_default_texts():
     return {
         "welcome_type": "text",
@@ -106,7 +148,7 @@ class JSONManager:
                 "force_join": [],
                 "log_channel": "",
                 "bot_active": True,
-                "forward_lock": False,  # NEW: Forward lock toggle
+                "forward_lock": False,
                 "texts": get_default_texts()
             },
             LOGS_FILE: {"logs": []}
@@ -151,8 +193,16 @@ class JSONManager:
                 "id": uid, "name": data.get("name", ""),
                 "username": data.get("username", ""),
                 "joined": datetime.now().isoformat(),
-                "downloads": 0, "banned": False
+                "downloads": 0, "views": 0, "banned": False
             }
+            await self._write(USERS_FILE, d)
+
+    async def inc_views(self, uid: int):
+        d = await self._read(USERS_FILE)
+        if str(uid) in d["users"]:
+            if "views" not in d["users"][str(uid)]:
+                d["users"][str(uid)]["views"] = 0
+            d["users"][str(uid)]["views"] += 1
             await self._write(USERS_FILE, d)
 
     async def is_banned(self, uid: int) -> bool:
@@ -220,21 +270,16 @@ class JSONManager:
         
         if message.forward_sender_name:
             return (None, None, None,
-                "⚠️ این کاربر **Privacy Forward** را فعال کرده است.\n\n"
-                "از کاربر بخواهید به تنظیمات تلگرام برود:\n"
-                "`Settings → Privacy → Forwarded Messages → Everybody`\n\n"
-                "یا از **آیدی عددی** کاربر استفاده کنید.")
+                "⚠️ این کاربر Privacy Forward را فعال کرده است.\n"
+                "از آیدی عددی کاربر استفاده کنید.")
         
         if message.forward_from_chat:
             return (None, None, None,
-                "❌ پیام از یک **کانال/گروه** فوروارد شده، نه کاربر!\n"
-                "لطفاً پیام یک **کاربر** را فوروارد کنید.")
+                "❌ پیام از کانال/گروه فوروارد شده، نه کاربر!")
         
         text = message.text.strip() if message.text else ""
         if not text:
-            return (None, None, None,
-                "❌ هیچ متنی دریافت نشد.\n"
-                "لطفاً **آیدی عددی** یا **پیام فوروارد** ارسال کنید.")
+            return (None, None, None, "❌ متنی دریافت نشد.")
         
         if text.isdigit():
             uid = int(text)
@@ -242,18 +287,9 @@ class JSONManager:
                 chat = await bot.get_chat(uid)
                 return (uid, chat.username or "", chat.first_name or "", None)
             except:
-                return (None, None, None,
-                    f"❌ کاربر با آیدی `{uid}` پیدا نشد.\n"
-                    "مطمئن شوید:\n"
-                    "• کاربر ربات را استارت زده باشد\n"
-                    "• آیدی عددی صحیح باشد")
+                return (None, None, None, f"❌ کاربر با آیدی {uid} پیدا نشد.")
         
-        return (None, None, None,
-            "❌ **کاربر پیدا نشد!**\n\n"
-            "📌 **روش‌های قابل قبول:**\n"
-            "• 🔢 **آیدی عددی** کاربر\n"
-            "• 📤 **فوروارد** یک پیام از کاربر\n\n"
-            "🔄 لطفاً دوباره تلاش کنید:")
+        return (None, None, None, "❌ کاربر پیدا نشد!\n📌 آیدی عددی یا فوروارد پیام.")
 
     async def add_file(self, data: Dict) -> str:
         d = await self._read(FILES_FILE)
@@ -262,7 +298,7 @@ class JSONManager:
             "id": fid, "file_id": data["file_id"], "type": data["type"],
             "caption": data.get("caption", ""), "file_name": data.get("file_name", ""),
             "password": data.get("password", ""),
-            "date": datetime.now().isoformat(), "downloads": 0, "admin": data["admin"]
+            "date": datetime.now().isoformat(), "downloads": 0, "views": 0, "admin": data["admin"]
         }
         await self._write(FILES_FILE, d)
         return fid
@@ -287,6 +323,14 @@ class JSONManager:
             d["files"][fid]["downloads"] += 1
             await self._write(FILES_FILE, d)
 
+    async def inc_file_views(self, fid: str):
+        d = await self._read(FILES_FILE)
+        if fid in d["files"]:
+            if "views" not in d["files"][fid]:
+                d["files"][fid]["views"] = 0
+            d["files"][fid]["views"] += 1
+            await self._write(FILES_FILE, d)
+
     async def update_caption(self, fid: str, caption: str):
         d = await self._read(FILES_FILE)
         if fid in d["files"]:
@@ -299,14 +343,56 @@ class JSONManager:
             d["files"][fid]["password"] = password
             await self._write(FILES_FILE, d)
 
-    async def get_stats(self) -> Dict:
+    # ==================== ENHANCED STATISTICS ====================
+    async def get_enhanced_stats(self) -> Dict:
+        """Get enhanced statistics with active users"""
         users = await self._read(USERS_FILE)
         files = await self._read(FILES_FILE)
+        
+        total_users = len(users["users"])
+        
+        # Active users = users with at least 1 download
+        active_users = sum(1 for u in users["users"].values() if u.get("downloads", 0) > 0)
+        
+        total_files = len(files["files"])
+        total_downloads = sum(f.get("downloads", 0) for f in files["files"].values())
+        
+        # Total views = sum of all file views + user link clicks
+        total_views = sum(f.get("views", 0) for f in files["files"].values())
+        total_views += sum(u.get("views", 0) for u in users["users"].values())
+        
         return {
-            "users": len(users["users"]),
-            "files": len(files["files"]),
-            "downloads": sum(f["downloads"] for f in files["files"].values())
+            "total_users": total_users,
+            "active_users": active_users,
+            "total_files": total_files,
+            "total_downloads": total_downloads,
+            "total_views": total_views,
+            "force_join_stats": await self.get_force_join_stats()
         }
+
+    async def get_force_join_stats(self) -> List[Dict]:
+        """Get statistics for each force join channel"""
+        s = await self.get_settings()
+        channels = s.get("force_join", [])
+        stats = []
+        
+        for ch in channels:
+            try:
+                count = await self._get_chat_member_count(ch)
+                stats.append({"channel": ch, "member_count": count})
+            except:
+                stats.append({"channel": ch, "member_count": 0})
+        
+        return stats
+
+    async def _get_chat_member_count(self, channel_id: str) -> int:
+        """Get member count of a channel/group"""
+        try:
+            bot = Bot.get_current()
+            count = await bot.get_chat_member_count(channel_id)
+            return count
+        except:
+            return 0
 
     async def get_all_users(self) -> Dict:
         return (await self._read(USERS_FILE))["users"]
@@ -411,17 +497,12 @@ def maintenance_kb(file_id: str = ""):
     ])
 
 def settings_kb(settings: Dict):
-    """Settings menu with Forward Lock toggle"""
     timer_val = settings.get("delete_timer", 300)
     timer_text = f"⏱ تایمر حذف پست: {format_time(timer_val // 60) if timer_val else 'خاموش'}"
     fj_count = len(settings.get("force_join", []))
     
-    # Forward lock button
     forward_locked = settings.get("forward_lock", False)
-    if forward_locked:
-        forward_text = "🔒 قفل فوروارد: فعال ✅"
-    else:
-        forward_text = "🔓 قفل فوروارد: غیرفعال ❌"
+    forward_text = "🔒 قفل فوروارد: فعال ✅" if forward_locked else "🔓 قفل فوروارد: غیرفعال ❌"
     
     b = InlineKeyboardBuilder()
     b.row(InlineKeyboardButton(text=forward_text, callback_data="toggle_forward_lock"))
@@ -431,6 +512,19 @@ def settings_kb(settings: Dict):
     b.row(InlineKeyboardButton(text=timer_text, callback_data="set_timer"))
     b.row(InlineKeyboardButton(text="🔙 بازگشت به منو", callback_data="panel"))
     return b.as_markup()
+
+def stats_kb():
+    """Statistics menu with force join stats button"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📊 آمار عضویت اجباری", callback_data="force_join_stats")],
+        [InlineKeyboardButton(text="🔙 بازگشت به منو", callback_data="panel")]
+    ])
+
+def force_join_stats_kb():
+    """Back button for force join stats"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 بازگشت به آمار", callback_data="show_stats")]
+    ])
 
 def files_kb(files: Dict, page: int = 0):
     b = InlineKeyboardBuilder()
@@ -509,7 +603,6 @@ def admins_main_menu_kb():
 
 def remove_privileged_kb(admins: Dict, vips: Dict):
     b = InlineKeyboardBuilder()
-    
     if admins:
         for aid, a in admins.items():
             if str(aid) == str(ADMIN_ID):
@@ -517,13 +610,11 @@ def remove_privileged_kb(admins: Dict, vips: Dict):
             uname = a.get('username', '')
             display = f"@{uname}-admin" if uname else f"ID:{aid}-admin"
             b.row(InlineKeyboardButton(text=f"❌ {display}", callback_data=f"ra_{aid}"))
-    
     if vips:
         for vid, v in vips.items():
             uname = v.get('username', '')
             display = f"@{uname}-vip" if uname else f"ID:{vid}-vip"
             b.row(InlineKeyboardButton(text=f"❌ {display}", callback_data=f"rv_{vid}"))
-    
     b.row(InlineKeyboardButton(text="🔙 بازگشت", callback_data="admins_menu"))
     return b.as_markup()
 
@@ -627,6 +718,7 @@ router = Router()
 async def start_cmd(message: Message, state: FSMContext):
     user = message.from_user
     await db.add_user(user.id, {"name": user.first_name, "username": user.username})
+    await db.inc_views(user.id)
     
     if await db.is_banned(user.id):
         texts = await db.get_texts()
@@ -636,6 +728,7 @@ async def start_cmd(message: Message, state: FSMContext):
     args = message.text.split()
     if len(args) > 1:
         file_id = args[1]
+        await db.inc_file_views(file_id)
         
         if not await db.is_bot_active() and not await db.is_privileged(user.id):
             texts = await db.get_texts()
@@ -729,7 +822,7 @@ async def check_user_joined(bot: Bot, user_id: int, channels: List[str]) -> List
             not_joined.append((i, ch))
     return not_joined
 
-# ==================== FORCE JOIN ====================
+# ==================== FORCE JOIN CHECK ====================
 @router.callback_query(F.data == "fj_check")
 async def force_join_check(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
@@ -803,11 +896,9 @@ async def notify_admins_download(bot: Bot, file_data: Dict, user):
             except:
                 pass
 
-# ==================== SEND FILE WITH PROTECT CONTENT ====================
+# ==================== SEND FILE ====================
 async def send_file_to_user(message: Message, file_data: Dict):
     fid, cap, ftype = file_data["file_id"], file_data.get("caption", ""), file_data["type"]
-    
-    # Check if forward lock is enabled
     protect = await db.is_forward_locked()
     
     try:
@@ -864,13 +955,75 @@ async def menu_files(message: Message):
         return
     await message.answer(f"📂 فایل‌ها ({len(files)})", reply_markup=files_kb(files))
 
+# ==================== ENHANCED STATISTICS ====================
 @router.message(F.text == "📊 آمار ربات")
 async def menu_stats(message: Message):
     if not await db.is_admin(message.from_user.id):
         return
-    s = await db.get_stats()
-    await message.answer(f"📊 آمار\n\n👥 کاربران: {s['users']}\n📁 فایل‌ها: {s['files']}\n📥 دانلود: {s['downloads']}", reply_markup=await get_admin_panel_kb())
+    await show_enhanced_stats(message)
 
+@router.callback_query(F.data == "show_stats")
+async def stats_callback(callback: CallbackQuery):
+    await callback.answer()
+    await show_enhanced_stats(callback.message)
+
+async def show_enhanced_stats(message: Message):
+    """Show enhanced statistics with table"""
+    stats = await db.get_enhanced_stats()
+    
+    # Build table
+    table_rows = [
+        ["👥 کل کاربران", format_number(stats["total_users"])],
+        ["🟢 کاربران فعال", format_number(stats["active_users"])],
+        ["📁 کل فایل‌ها", format_number(stats["total_files"])],
+        ["📥 کل دانلودها", format_number(stats["total_downloads"])],
+        ["👁 مجموع بازدیدها", format_number(stats["total_views"])],
+    ]
+    
+    table = make_table(table_rows, headers=["📊 آیتم", "🔢 تعداد"])
+    
+    # Edit existing message if it's a callback, otherwise send new
+    if hasattr(message, 'edit_text'):
+        await message.edit_text(table, reply_markup=stats_kb())
+    else:
+        await message.answer(table, reply_markup=stats_kb())
+
+# ==================== FORCE JOIN STATISTICS ====================
+@router.callback_query(F.data == "force_join_stats")
+async def force_join_stats_handler(callback: CallbackQuery):
+    await callback.answer()
+    
+    s = await db.get_settings()
+    channels = s.get("force_join", [])
+    
+    if not channels:
+        await callback.message.edit_text(
+            "📊 **آمار عضویت اجباری**\n\n"
+            "❌ هیچ چنلی برای عضویت اجباری تنظیم نشده است.",
+            reply_markup=force_join_stats_kb()
+        )
+        return
+    
+    txt = "📊 **آمار عضویت اجباری**\n\n"
+    total_members = 0
+    
+    bot = callback.bot
+    
+    for i, ch in enumerate(channels, 1):
+        try:
+            count = await bot.get_chat_member_count(ch)
+            total_members += count
+            txt += f"🔗 چنل {i} ({ch}): {format_number(count)} عضو\n"
+        except Exception as e:
+            txt += f"🔗 چنل {i} ({ch}): ❌ دسترسی ندارم\n"
+    
+    txt += f"\n➖➖➖➖➖➖➖➖➖➖➖➖➖\n\n"
+    txt += f"📌 **مجموع اعضای یکتا:** {format_number(total_members)}\n"
+    txt += f"📅 بروزرسانی: {datetime.now().strftime('%H:%M:%S')}"
+    
+    await callback.message.edit_text(txt, reply_markup=force_join_stats_kb())
+
+# ==================== REST OF HANDLERS ====================
 @router.message(F.text == "📢 ارسال همگانی")
 async def menu_broadcast(message: Message, state: FSMContext):
     if not await db.is_admin(message.from_user.id):
@@ -952,10 +1105,7 @@ async def admins_menu_cb(callback: CallbackQuery):
 async def add_admin_prompt(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(SettingsState.waiting_add_admin)
-    await callback.message.edit_text(
-        "👮 **افزودن ادمین**\n\n📌 آیدی عددی یا فوروارد پیام:",
-        reply_markup=back_inline("admins_menu")
-    )
+    await callback.message.edit_text("👮 **افزودن ادمین**\n\n📌 آیدی عددی یا فوروارد:", reply_markup=back_inline("admins_menu"))
 
 @router.message(SettingsState.waiting_add_admin)
 async def save_admin(message: Message, state: FSMContext):
@@ -977,10 +1127,7 @@ async def save_admin(message: Message, state: FSMContext):
 async def add_vip_prompt(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(SettingsState.waiting_add_vip)
-    await callback.message.edit_text(
-        "⭐ **افزودن VIP**\n\n📌 آیدی عددی یا فوروارد پیام:",
-        reply_markup=back_inline("admins_menu")
-    )
+    await callback.message.edit_text("⭐ **افزودن VIP**\n\n📌 آیدی عددی یا فوروارد:", reply_markup=back_inline("admins_menu"))
 
 @router.message(SettingsState.waiting_add_vip)
 async def save_vip(message: Message, state: FSMContext):
@@ -1013,7 +1160,6 @@ async def remove_priv(callback: CallbackQuery):
 async def rem_admin(callback: CallbackQuery):
     aid = callback.data.replace("ra_", "")
     if await db.remove_admin(int(aid)):
-        await db.add_log("admin_remove", callback.from_user.id, f"Removed {aid}")
         await callback.answer("✅ حذف شد")
     await remove_priv(callback)
 
@@ -1021,11 +1167,9 @@ async def rem_admin(callback: CallbackQuery):
 async def rem_vip(callback: CallbackQuery):
     vid = callback.data.replace("rv_", "")
     if await db.remove_vip(int(vid)):
-        await db.add_log("vip_remove", callback.from_user.id, f"Removed VIP {vid}")
         await callback.answer("✅ حذف شد")
     await remove_priv(callback)
 
-# ==================== REST OF HANDLERS ====================
 @router.message(F.text == "📜 گزارشات")
 async def menu_logs(message: Message):
     if not await db.is_admin(message.from_user.id):
@@ -1073,24 +1217,17 @@ async def toggle_bot_from_panel(message: Message):
     else:
         await message.answer("🔴 **ربات خاموش شد!**", reply_markup=kb)
 
-# ==================== FORWARD LOCK TOGGLE ====================
 @router.callback_query(F.data == "toggle_forward_lock")
 async def toggle_forward_lock_handler(callback: CallbackQuery):
-    """Toggle forward lock ON/OFF"""
     await callback.answer()
-    
     new_status = await db.toggle_forward_lock()
     await db.add_log("settings", callback.from_user.id, f"Forward Lock {'ON' if new_status else 'OFF'}")
-    
-    # Update settings message
     s = await db.get_settings()
     await callback.message.edit_text("⚙️ تنظیمات", reply_markup=settings_kb(s))
-    
-    # Send status message
     if new_status:
-        await callback.message.answer("🔒 **قفل فوروارد فعال شد!**\n\nکاربران دیگر نمی‌توانند فایل‌ها را فوروارد کنند.")
+        await callback.message.answer("🔒 **قفل فوروارد فعال شد!**")
     else:
-        await callback.message.answer("🔓 **قفل فوروارد غیرفعال شد!**\n\nکاربران می‌توانند فایل‌ها را فوروارد کنند.")
+        await callback.message.answer("🔓 **قفل فوروارد غیرفعال شد!**")
 
 # ==================== UPLOAD ====================
 @router.message(UploadState.waiting)
@@ -1291,7 +1428,7 @@ async def settings_cb(callback: CallbackQuery):
     await callback.answer()
     await callback.message.edit_text("⚙️ تنظیمات", reply_markup=settings_kb(await db.get_settings()))
 
-# ==================== TEXTS EDITOR ====================
+# ==================== TEXTS EDITOR (compact - unchanged) ====================
 @router.callback_query(F.data == "edit_texts")
 async def texts_menu(callback: CallbackQuery):
     await callback.answer()
@@ -1499,7 +1636,6 @@ async def on_startup(bot: Bot):
             d["admins"] = {}
         d["admins"][str(ADMIN_ID)] = {"role": "owner", "username": ""}
         await db._write(ADMINS_FILE, d)
-    # Ensure forward_lock key exists
     s = await db.get_settings()
     if "forward_lock" not in s:
         await db.update_setting("forward_lock", False)
