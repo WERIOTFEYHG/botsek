@@ -1,7 +1,7 @@
 """
-Telegram File Uploader Bot - v5.1 Professional
+Telegram File Uploader Bot - v6 Professional
 Aiogram 3.x | JSON Storage | Railway Ready
-Password Protection | Colored Reply Keyboard | Download Reports | Beautiful Links
+Password Protection | Force Join | Beautiful UI
 """
 
 import asyncio
@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
 from aiogram import Bot, Dispatcher, F, Router
-from aiogram.enums import ParseMode
+from aiogram.enums import ParseMode, ChatMemberStatus
 from aiogram.client.default import DefaultBotProperties
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -62,7 +62,12 @@ class JSONManager:
             USERS_FILE: {"users": {}},
             FILES_FILE: {"files": {}},
             ADMINS_FILE: {"admins": {}},
-            SETTINGS_FILE: {"welcome": "👋 سلام! به ربات آپلود فایل خوش اومدی.", "delete_timer": 300, "force_join": [], "log_channel": ""},
+            SETTINGS_FILE: {
+                "welcome": "👋 سلام! به ربات آپلود فایل خوش اومدی.",
+                "delete_timer": 300,
+                "force_join": [],  # list of channel/group IDs
+                "log_channel": ""
+            },
             LOGS_FILE: {"logs": []}
         }
         for fn, data in defaults.items():
@@ -207,12 +212,30 @@ class JSONManager:
         d[key] = val
         await self._write(SETTINGS_FILE, d)
 
+    async def add_force_join(self, channel: str) -> bool:
+        s = await self.get_settings()
+        channels = s.get("force_join", [])
+        if channel not in channels:
+            channels.append(channel)
+            await self.update_setting("force_join", channels)
+            return True
+        return False
+
+    async def remove_force_join(self, channel: str) -> bool:
+        s = await self.get_settings()
+        channels = s.get("force_join", [])
+        if channel in channels:
+            channels.remove(channel)
+            await self.update_setting("force_join", channels)
+            return True
+        return False
+
 db = JSONManager()
 
 # ==================== KEYBOARDS ====================
 
 def admin_main_menu():
-    """Main admin ReplyKeyboard with colored buttons"""
+    """Main admin ReplyKeyboard"""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📤 آپلود فایل جدید")],
@@ -223,7 +246,7 @@ def admin_main_menu():
             [KeyboardButton(text="💾 پشتیبان‌گیری")]
         ],
         resize_keyboard=True,
-        input_field_placeholder="👑 یک گزینه از منوی مدیریت انتخاب کنید...",
+        input_field_placeholder="👑 یک گزینه انتخاب کنید...",
         selective=True
     )
 
@@ -239,28 +262,24 @@ def user_main_menu():
         selective=True
     )
 
-def back_button():
-    """Simple back button"""
+def back_inline(cb: str = "panel"):
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 بازگشت", callback_data="panel")]
+        [InlineKeyboardButton(text="🔙 بازگشت", callback_data=cb)]
     ])
 
-def skip_back_buttons(back_cb: str = "panel"):
-    """Skip and back buttons"""
+def skip_back_inline(back_cb: str = "panel"):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⏭ رد کردن", callback_data="skip_caption")],
         [InlineKeyboardButton(text="🔙 بازگشت", callback_data=back_cb)]
     ])
 
-def skip_pass_buttons(back_cb: str = "panel"):
-    """Skip password and back buttons"""
+def skip_pass_inline(back_cb: str = "panel"):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⏭ بدون رمز", callback_data="skip_password")],
         [InlineKeyboardButton(text="🔙 بازگشت", callback_data=back_cb)]
     ])
 
 def files_kb(files: Dict, page: int = 0):
-    """Files list inline keyboard"""
     b = InlineKeyboardBuilder()
     items = list(files.items())
     per_page = 6
@@ -289,7 +308,6 @@ def files_kb(files: Dict, page: int = 0):
     return b.as_markup()
 
 def file_actions_kb(fid: str):
-    """File actions inline keyboard"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📥 دریافت فایل", callback_data=f"dl_{fid}"),
          InlineKeyboardButton(text="🔗 کپی لینک", callback_data=f"link_{fid}")],
@@ -300,14 +318,12 @@ def file_actions_kb(fid: str):
     ])
 
 def confirm_delete_kb(fid: str):
-    """Delete confirmation"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ بله حذف شود", callback_data=f"delyes_{fid}"),
          InlineKeyboardButton(text="❌ منصرف شدم", callback_data=f"file_{fid}")]
     ])
 
 def users_kb(users: Dict, page: int = 0):
-    """Users list inline keyboard"""
     b = InlineKeyboardBuilder()
     items = list(users.items())
     per_page = 6
@@ -332,14 +348,12 @@ def users_kb(users: Dict, page: int = 0):
     return b.as_markup()
 
 def user_actions_kb(uid: str):
-    """User actions"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🚫 تغییر وضعیت مسدودیت", callback_data=f"ban_{uid}")],
         [InlineKeyboardButton(text="🔙 لیست کاربران", callback_data="users_list")]
     ])
 
 def admins_kb(admins: Dict):
-    """Admins management"""
     b = InlineKeyboardBuilder()
     for aid, a in admins.items():
         icon = "👑" if a['role'] == 'owner' else "👮"
@@ -352,15 +366,54 @@ def settings_kb(settings: Dict):
     """Settings menu"""
     timer = settings.get("delete_timer", 300) // 60
     log_ch = settings.get("log_channel", "تنظیم نشده")
+    fj = settings.get("force_join", [])
+    fj_count = len(fj)
+    
     b = InlineKeyboardBuilder()
     b.row(InlineKeyboardButton(text="👋 پیام خوشامد", callback_data="set_welcome"))
     b.row(InlineKeyboardButton(text=f"⏱ تایمر حذف: {timer} دقیقه", callback_data="set_timer"))
-    b.row(InlineKeyboardButton(text=f"📢 کانال گزارش: {log_ch}", callback_data="set_logchan"))
-    b.row(InlineKeyboardButton(text="🔙 بازگشت", callback_data="panel"))
+    b.row(InlineKeyboardButton(text=f"📢 کانال گزارش", callback_data="set_logchan"))
+    b.row(InlineKeyboardButton(text=f"🔗 عضویت اجباری ({fj_count})", callback_data="set_forcejoin"))
+    b.row(InlineKeyboardButton(text="🔙 بازگشت به منو", callback_data="panel"))
+    return b.as_markup()
+
+def force_join_admin_kb(channels: List[str]):
+    """Force join management for admin panel"""
+    b = InlineKeyboardBuilder()
+    
+    if channels:
+        for i, ch in enumerate(channels, 1):
+            b.row(InlineKeyboardButton(
+                text=f"❌ حذف چنل {i}: {ch}",
+                callback_data=f"fj_del_{ch}"
+            ))
+    
+    b.row(InlineKeyboardButton(text="➕ افزودن چنل/گروه جدید", callback_data="fj_add"))
+    b.row(InlineKeyboardButton(text="🔙 بازگشت به تنظیمات", callback_data="settings"))
+    return b.as_markup()
+
+def force_join_user_kb(channels: List[str], not_joined: List[tuple]):
+    """
+    Force join keyboard for users
+    Shows numbered buttons for channels they need to join
+    not_joined: list of (index, channel_id)
+    """
+    b = InlineKeyboardBuilder()
+    
+    for idx, ch in not_joined:
+        # Create invite link button
+        # Try to get username, otherwise use ID
+        display = ch.lstrip("@")
+        b.row(InlineKeyboardButton(
+            text=f"📢 چنل {idx}",
+            url=f"https://t.me/{display}" if not ch.startswith("-") else f"https://t.me/c/{ch.replace('-100','')}"
+        ))
+    
+    b.row(InlineKeyboardButton(text="✅ بررسی عضویت", callback_data="fj_check"))
+    
     return b.as_markup()
 
 def download_notify_kb(file_id: str, user_id: int):
-    """Download notification buttons"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📁 مشاهده فایل", callback_data=f"file_{file_id}"),
          InlineKeyboardButton(text="👤 پروفایل کاربر", callback_data=f"user_{user_id}")]
@@ -381,6 +434,7 @@ class SettingsState(StatesGroup):
     waiting_timer = State()
     waiting_admin_id = State()
     waiting_logchan = State()
+    waiting_forcejoin = State()
 
 class BroadcastState(StatesGroup):
     waiting = State()
@@ -406,6 +460,27 @@ async def start_cmd(message: Message, state: FSMContext):
         file_id = args[1]
         file_data = await db.get_file(file_id)
         if file_data:
+            # Check force join
+            settings = await db.get_settings()
+            force_channels = settings.get("force_join", [])
+            
+            if force_channels:
+                not_joined = await check_user_joined(message.bot, user.id, force_channels)
+                
+                if not_joined:
+                    # User needs to join channels first
+                    await state.update_data(pending_file=file_id)
+                    
+                    txt = (
+                        "🔒 **برای دریافت فایل، عضو شوید**\n\n"
+                        "📢 لطفاً ابتدا در چنل‌های زیر عضو شوید:\n\n"
+                        "پس از عضویت، دکمه بررسی را بزنید."
+                    )
+                    
+                    await message.answer(txt, reply_markup=force_join_user_kb(force_channels, not_joined))
+                    return
+            
+            # Check password
             if file_data.get("password"):
                 await state.update_data(pending_file=file_id)
                 await state.set_state(PasswordState.waiting)
@@ -436,6 +511,73 @@ async def start_cmd(message: Message, state: FSMContext):
             settings.get("welcome", "👋 سلام!"),
             reply_markup=user_main_menu()
         )
+
+async def check_user_joined(bot: Bot, user_id: int, channels: List[str]) -> List[tuple]:
+    """
+    Check which channels user hasn't joined
+    Returns list of (index, channel) for not-joined channels
+    """
+    not_joined = []
+    for i, ch in enumerate(channels, 1):
+        try:
+            member = await bot.get_chat_member(chat_id=ch, user_id=user_id)
+            if member.status in [ChatMemberStatus.LEFT, ChatMemberStatus.KICKED]:
+                not_joined.append((i, ch))
+        except:
+            not_joined.append((i, ch))
+    return not_joined
+
+# ==================== FORCE JOIN CHECK (for users) ====================
+@router.callback_query(F.data == "fj_check")
+async def force_join_check(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    
+    user_id = callback.from_user.id
+    settings = await db.get_settings()
+    force_channels = settings.get("force_join", [])
+    
+    if not force_channels:
+        await callback.answer("⚠️ هیچ چنلی تنظیم نشده.", show_alert=True)
+        return
+    
+    not_joined = await check_user_joined(callback.bot, user_id, force_channels)
+    
+    if not_joined:
+        # Still not joined all channels
+        # Update the message with remaining channels
+        txt = (
+            "⚠️ **هنوز عضو نشدید!**\n\n"
+            "لطفاً در چنل‌های زیر عضو شوید:"
+        )
+        try:
+            await callback.message.edit_text(
+                txt,
+                reply_markup=force_join_user_kb(force_channels, not_joined)
+            )
+            await callback.answer("❌ هنوز همه چنل‌ها رو عضو نشدید!", show_alert=True)
+        except:
+            await callback.answer("❌ لطفاً همه چنل‌ها رو عضو شوید!", show_alert=True)
+    else:
+        # All joined! Send the file
+        data = await state.get_data()
+        file_id = data.get("pending_file")
+        
+        if file_id:
+            file_data = await db.get_file(file_id)
+            if file_data:
+                await callback.message.edit_text("✅ عضویت تایید شد! در حال ارسال فایل...")
+                await send_file_to_user(callback.message, file_data)
+                await notify_admins_download(callback.bot, file_data, callback.from_user)
+                await state.clear()
+            else:
+                await callback.answer("❌ فایل پیدا نشد.", show_alert=True)
+        else:
+            await callback.message.edit_text(
+                "✅ **عضویت شما تایید شد!**\n\n"
+                "حالا می‌تونید از ربات استفاده کنید.",
+                reply_markup=user_main_menu()
+            )
+            await state.clear()
 
 @router.callback_query(F.data == "cancel_download")
 async def cancel_download(callback: CallbackQuery, state: FSMContext):
@@ -543,7 +685,7 @@ async def auto_delete(msg: Message, delay: int):
     except:
         pass
 
-# ==================== REPLY KEYBOARD HANDLERS (منوی رنگی) ====================
+# ==================== REPLY KEYBOARD HANDLERS ====================
 @router.message(F.text == "📤 آپلود فایل جدید")
 async def menu_upload(message: Message, state: FSMContext):
     if not await db.is_admin(message.from_user.id):
@@ -554,7 +696,7 @@ async def menu_upload(message: Message, state: FSMContext):
         "لطفا فایل خود را ارسال کنید.\n"
         "🖼 عکس | 🎬 ویدیو | 🎵 صوت | 🎤 ویس\n"
         "✨ گیف | 🏷 استیکر | 📄 فایل",
-        reply_markup=back_button()
+        reply_markup=back_inline()
     )
 
 @router.message(F.text == "📂 مدیریت فایل‌ها")
@@ -582,7 +724,7 @@ async def menu_broadcast(message: Message, state: FSMContext):
     if not await db.is_admin(message.from_user.id):
         return
     await state.set_state(BroadcastState.waiting)
-    await message.answer("📢 پیام خود را برای ارسال همگانی بفرستید:", reply_markup=back_button())
+    await message.answer("📢 پیام خود را برای ارسال همگانی بفرستید:", reply_markup=back_inline())
 
 @router.message(F.text == "⚙️ تنظیمات")
 async def menu_settings(message: Message):
@@ -688,20 +830,20 @@ async def upload_receive(message: Message, state: FSMContext):
     
     await state.update_data(file_id=file_id, file_type=file_type, file_name=file_name)
     await state.set_state(UploadState.caption)
-    await message.answer("✅ فایل دریافت شد! حالا کپشن را بفرستید:", reply_markup=skip_back_buttons())
+    await message.answer("✅ فایل دریافت شد! حالا کپشن را بفرستید:", reply_markup=skip_back_inline())
 
 @router.callback_query(F.data == "skip_caption")
 async def skip_caption(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.update_data(caption="")
     await state.set_state(UploadState.password)
-    await callback.message.edit_text("🔒 رمز عبور می‌خواهید؟", reply_markup=skip_pass_buttons())
+    await callback.message.edit_text("🔒 رمز عبور می‌خواهید؟", reply_markup=skip_pass_inline())
 
 @router.message(UploadState.caption)
 async def upload_caption(message: Message, state: FSMContext):
     await state.update_data(caption=message.text or "")
     await state.set_state(UploadState.password)
-    await message.answer("🔒 رمز عبور می‌خواهید؟", reply_markup=skip_pass_buttons())
+    await message.answer("🔒 رمز عبور می‌خواهید؟", reply_markup=skip_pass_inline())
 
 @router.callback_query(F.data == "skip_password")
 async def skip_password(callback: CallbackQuery, state: FSMContext):
@@ -770,7 +912,7 @@ async def files_list_cb(callback: CallbackQuery):
     await callback.answer()
     files = await db.get_all_files()
     if not files:
-        await callback.message.edit_text("📂 فایلی نیست.", reply_markup=admin_main_menu())
+        await callback.message.edit_text("📂 فایلی نیست.", reply_markup=None)
         return
     await callback.message.edit_text(f"📂 فایل‌ها ({len(files)})", reply_markup=files_kb(files))
 
@@ -828,9 +970,7 @@ async def edit_cap_start(callback: CallbackQuery, state: FSMContext):
     fid = callback.data.replace("editcap_", "")
     await state.update_data(edit_fid=fid)
     await state.set_state(EditState.waiting_caption)
-    await callback.message.edit_text("✏️ کپشن جدید را بفرستید:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 بازگشت", callback_data=f"file_{fid}")]
-    ]))
+    await callback.message.edit_text("✏️ کپشن جدید را بفرستید:", reply_markup=back_inline(f"file_{fid}"))
 
 @router.message(EditState.waiting_caption)
 async def edit_cap_save(message: Message, state: FSMContext):
@@ -847,9 +987,7 @@ async def set_pass_start(callback: CallbackQuery, state: FSMContext):
     fid = callback.data.replace("setpass_", "")
     await state.update_data(edit_fid=fid)
     await state.set_state(EditState.waiting_password)
-    await callback.message.edit_text("🔒 رمز جدید (remove برای حذف):", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 بازگشت", callback_data=f"file_{fid}")]
-    ]))
+    await callback.message.edit_text("🔒 رمز جدید (remove برای حذف):", reply_markup=back_inline(f"file_{fid}"))
 
 @router.message(EditState.waiting_password)
 async def set_pass_save(message: Message, state: FSMContext):
@@ -881,7 +1019,7 @@ async def users_list_cb(callback: CallbackQuery):
     await callback.answer()
     users = await db.get_all_users()
     if not users:
-        await callback.message.edit_text("👥 کاربری نیست.", reply_markup=admin_main_menu())
+        await callback.message.edit_text("👥 کاربری نیست.")
         return
     await callback.message.edit_text(f"👥 کاربران ({len(users)})", reply_markup=users_kb(users))
 
@@ -924,9 +1062,7 @@ async def admins_list_cb(callback: CallbackQuery):
 async def add_admin_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(SettingsState.waiting_admin_id)
-    await callback.message.edit_text("➕ آیدی عددی ادمین جدید:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 بازگشت", callback_data="admins_list")]
-    ]))
+    await callback.message.edit_text("➕ آیدی عددی ادمین جدید:", reply_markup=back_inline("admins_list"))
 
 @router.message(SettingsState.waiting_admin_id)
 async def add_admin_save(message: Message, state: FSMContext):
@@ -949,13 +1085,18 @@ async def remove_admin_cb(callback: CallbackQuery):
         await callback.answer("✅ حذف شد")
     await admins_list_cb(callback)
 
+# ==================== SETTINGS HANDLERS ====================
+@router.callback_query(F.data == "settings")
+async def settings_cb(callback: CallbackQuery):
+    await callback.answer()
+    s = await db.get_settings()
+    await callback.message.edit_text("⚙️ تنظیمات", reply_markup=settings_kb(s))
+
 @router.callback_query(F.data == "set_welcome")
 async def set_welcome(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(SettingsState.waiting_welcome)
-    await callback.message.edit_text("👋 پیام خوشامد جدید:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 بازگشت", callback_data="settings")]
-    ]))
+    await callback.message.edit_text("👋 پیام خوشامد جدید:", reply_markup=back_inline("settings"))
 
 @router.message(SettingsState.waiting_welcome)
 async def save_welcome(message: Message, state: FSMContext):
@@ -967,9 +1108,7 @@ async def save_welcome(message: Message, state: FSMContext):
 async def set_timer(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(SettingsState.waiting_timer)
-    await callback.message.edit_text("⏱ زمان (دقیقه):", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 بازگشت", callback_data="settings")]
-    ]))
+    await callback.message.edit_text("⏱ زمان (دقیقه):", reply_markup=back_inline("settings"))
 
 @router.message(SettingsState.waiting_timer)
 async def save_timer(message: Message, state: FSMContext):
@@ -986,9 +1125,7 @@ async def save_timer(message: Message, state: FSMContext):
 async def set_logchan(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(SettingsState.waiting_logchan)
-    await callback.message.edit_text("📢 آیدی کانال:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔙 بازگشت", callback_data="settings")]
-    ]))
+    await callback.message.edit_text("📢 آیدی کانال:", reply_markup=back_inline("settings"))
 
 @router.message(SettingsState.waiting_logchan)
 async def save_logchan(message: Message, state: FSMContext):
@@ -996,11 +1133,63 @@ async def save_logchan(message: Message, state: FSMContext):
     await message.answer(f"✅ تنظیم شد.", reply_markup=admin_main_menu())
     await state.clear()
 
-@router.callback_query(F.data == "settings")
-async def settings_cb(callback: CallbackQuery):
+# ==================== FORCE JOIN ADMIN MANAGEMENT ====================
+@router.callback_query(F.data == "set_forcejoin")
+async def forcejoin_menu(callback: CallbackQuery):
     await callback.answer()
     s = await db.get_settings()
-    await callback.message.edit_text("⚙️ تنظیمات", reply_markup=settings_kb(s))
+    channels = s.get("force_join", [])
+    
+    if channels:
+        txt = "🔗 **چنل‌های عضویت اجباری:**\n\n"
+        for i, ch in enumerate(channels, 1):
+            txt += f"{i}. {ch}\n"
+        txt += "\nبرای حذف یا افزودن از دکمه‌ها استفاده کنید."
+    else:
+        txt = "🔗 **عضویت اجباری**\n\nهیچ چنلی تنظیم نشده.\nبرای افزودن کلیک کنید."
+    
+    await callback.message.edit_text(txt, reply_markup=force_join_admin_kb(channels))
+
+@router.callback_query(F.data == "fj_add")
+async def fj_add_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(SettingsState.waiting_forcejoin)
+    await callback.message.edit_text(
+        "➕ **افزودن چنل/گروه جدید**\n\n"
+        "آیدی چنل یا گروه را بفرستید:\n"
+        "مثال: @my_channel یا -100123456\n\n"
+        "⚠️ ربات باید در چنل/گروه ادمین باشد.",
+        reply_markup=back_inline("set_forcejoin")
+    )
+
+@router.message(SettingsState.waiting_forcejoin)
+async def fj_add_save(message: Message, state: FSMContext):
+    ch = message.text.strip()
+    
+    # Try to verify bot can access the chat
+    try:
+        await message.bot.get_chat(ch)
+        if await db.add_force_join(ch):
+            await message.answer(f"✅ {ch} با موفقیت اضافه شد.", reply_markup=admin_main_menu())
+        else:
+            await message.answer("❌ این چنل قبلاً اضافه شده.")
+    except Exception as e:
+        await message.answer(
+            f"❌ خطا: نمی‌توان به این چنل/گروه دسترسی پیدا کرد.\n"
+            f"مطمئن شوید ربات ادمین است و آیدی صحیح است.\n\n"
+            f"خطا: {str(e)[:100]}"
+        )
+    
+    await state.clear()
+
+@router.callback_query(F.data.startswith("fj_del_"))
+async def fj_delete(callback: CallbackQuery):
+    ch = callback.data.replace("fj_del_", "")
+    if await db.remove_force_join(ch):
+        await callback.answer(f"✅ {ch} حذف شد.")
+    else:
+        await callback.answer("❌ خطا در حذف.", show_alert=True)
+    await forcejoin_menu(callback)
 
 # ==================== BROADCAST ====================
 @router.message(BroadcastState.waiting)
@@ -1039,11 +1228,16 @@ async def on_startup(bot: Bot):
         d["admins"][str(ADMIN_ID)] = {"role": "owner", "added": datetime.now().isoformat()}
         await db._write(ADMINS_FILE, d)
     
+    # Ensure new settings keys exist
+    s = await db.get_settings()
+    if "force_join" not in s:
+        await db.update_setting("force_join", [])
+    
     await bot.set_my_commands([
         BotCommand(command="start", description="🚀 شروع"),
         BotCommand(command="admin", description="👑 پنل مدیریت")
     ])
-    logger.info("Bot started!")
+    logger.info("Bot started successfully!")
 
 async def main():
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
