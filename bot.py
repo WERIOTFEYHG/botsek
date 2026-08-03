@@ -1,7 +1,7 @@
 """
-Telegram File Uploader Bot - v6.3 Professional
+Telegram File Uploader Bot - v6.4 Professional
 Aiogram 3.x | JSON Storage | Railway Ready
-Fixed HTML Parsing | Smart Validation | Back Buttons | Clean UI
+Fixed HTML Parsing | Smart Validation | Clean Back Navigation
 """
 
 import asyncio
@@ -367,7 +367,7 @@ def admins_kb(admins: Dict):
     return b.as_markup()
 
 def settings_kb(settings: Dict):
-    """Settings menu - Force Join is now FIRST"""
+    """Settings menu - Force Join is FIRST"""
     timer = settings.get("delete_timer", 300) // 60
     fj = settings.get("force_join", [])
     fj_count = len(fj)
@@ -469,7 +469,6 @@ async def start_cmd(message: Message, state: FSMContext):
                 
                 if not_joined:
                     await state.update_data(pending_file=file_id)
-                    # CLEAN SINGLE MESSAGE for user
                     txt = "📢 **لطفاً ابتدا در چنل‌های زیر عضو شوید**\n\nپس از عضویت، دکمه بررسی را بزنید."
                     await message.answer(txt, reply_markup=force_join_user_kb(force_channels, not_joined))
                     return
@@ -526,7 +525,6 @@ async def force_join_check(callback: CallbackQuery, state: FSMContext):
     not_joined = await check_user_joined(callback.bot, user_id, force_channels)
     
     if not_joined:
-        # CLEAN SINGLE MESSAGE
         txt = "📢 **لطفاً ابتدا در چنل‌های زیر عضو شوید**\n\nپس از عضویت، دکمه بررسی را بزنید."
         try:
             await callback.message.edit_text(txt, reply_markup=force_join_user_kb(force_channels, not_joined))
@@ -1114,7 +1112,7 @@ async def save_logchan(message: Message, state: FSMContext):
         )
         return
 
-# ==================== FORCE JOIN ADMIN (WITH BACK BUTTON AFTER SUCCESS) ====================
+# ==================== FORCE JOIN ADMIN ====================
 @router.callback_query(F.data == "set_forcejoin")
 async def forcejoin_menu(callback: CallbackQuery):
     await callback.answer()
@@ -1198,15 +1196,14 @@ async def fj_add_save(message: Message, state: FSMContext):
         except:
             pass
         
-        # Add channel
+        # Add channel - SUCCESS with SINGLE back button
         if await db.add_force_join(ch):
             await message.answer(
                 f"✅ **چنل با موفقیت اضافه شد!**\n\n"
                 f"📢 نام: {safe_html(chat.title or ch)}\n"
                 f"🆔 آیدی: {safe_html(ch)}",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🔙 بازگشت به لیست چنل‌ها", callback_data="set_forcejoin")],
-                    [InlineKeyboardButton(text="🏠 بازگشت به منوی اصلی", callback_data="panel")]
+                    [InlineKeyboardButton(text="🔙 بازگشت به لیست چنل‌ها", callback_data="set_forcejoin")]
                 ])
             )
             await state.clear()
@@ -1234,7 +1231,7 @@ async def fj_add_save(message: Message, state: FSMContext):
                 [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_forcejoin")]
             ])
         )
-        return  # Stay in state for retry
+        return
 
 @router.callback_query(F.data.startswith("fj_del_"))
 async def fj_delete(callback: CallbackQuery):
