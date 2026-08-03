@@ -1,7 +1,7 @@
 """
-Telegram File Uploader Bot - v11.0 Professional
+Telegram File Uploader Bot - v11.1 Professional - FIXED STATS
 Aiogram 3.x | JSON Storage | Railway Ready
-Enhanced Statistics | Force Join Stats | Table Display | Active Users
+Enhanced Statistics | Force Join Stats | Table Display FIXED
 """
 
 import asyncio
@@ -74,8 +74,8 @@ def format_number(num: int) -> str:
     return f"{num:,}"
 
 def make_table(rows: List[List[str]], headers: List[str] = None) -> str:
-    """Create a beautiful table for Telegram"""
-    result = ""
+    """Create a beautiful table using HTML <pre> tag"""
+    result = "\n"
     
     # Calculate column widths
     col_widths = [0] * len(rows[0])
@@ -103,8 +103,6 @@ def make_table(rows: List[List[str]], headers: List[str] = None) -> str:
         for i, cell in enumerate(row):
             result += f"{str(cell):^{col_widths[i]}}│"
         result += "\n"
-        if idx < len(rows) - 1 and not headers:
-            result += "├" + "┼".join("─" * w for w in col_widths) + "┤\n"
     
     # Bottom border
     result += "└" + "┴".join("─" * w for w in col_widths) + "┘"
@@ -267,20 +265,13 @@ class JSONManager:
         if message.forward_from:
             user = message.forward_from
             return (user.id, user.username or "", user.first_name, None)
-        
         if message.forward_sender_name:
-            return (None, None, None,
-                "⚠️ این کاربر Privacy Forward را فعال کرده است.\n"
-                "از آیدی عددی کاربر استفاده کنید.")
-        
+            return (None, None, None, "⚠️ این کاربر Privacy Forward را فعال کرده است.\nاز آیدی عددی کاربر استفاده کنید.")
         if message.forward_from_chat:
-            return (None, None, None,
-                "❌ پیام از کانال/گروه فوروارد شده، نه کاربر!")
-        
+            return (None, None, None, "❌ پیام از کانال/گروه فوروارد شده، نه کاربر!")
         text = message.text.strip() if message.text else ""
         if not text:
             return (None, None, None, "❌ متنی دریافت نشد.")
-        
         if text.isdigit():
             uid = int(text)
             try:
@@ -288,7 +279,6 @@ class JSONManager:
                 return (uid, chat.username or "", chat.first_name or "", None)
             except:
                 return (None, None, None, f"❌ کاربر با آیدی {uid} پیدا نشد.")
-        
         return (None, None, None, "❌ کاربر پیدا نشد!\n📌 آیدی عددی یا فوروارد پیام.")
 
     async def add_file(self, data: Dict) -> str:
@@ -343,21 +333,15 @@ class JSONManager:
             d["files"][fid]["password"] = password
             await self._write(FILES_FILE, d)
 
-    # ==================== ENHANCED STATISTICS ====================
     async def get_enhanced_stats(self) -> Dict:
         """Get enhanced statistics with active users"""
         users = await self._read(USERS_FILE)
         files = await self._read(FILES_FILE)
         
         total_users = len(users["users"])
-        
-        # Active users = users with at least 1 download
         active_users = sum(1 for u in users["users"].values() if u.get("downloads", 0) > 0)
-        
         total_files = len(files["files"])
         total_downloads = sum(f.get("downloads", 0) for f in files["files"].values())
-        
-        # Total views = sum of all file views + user link clicks
         total_views = sum(f.get("views", 0) for f in files["files"].values())
         total_views += sum(u.get("views", 0) for u in users["users"].values())
         
@@ -367,32 +351,20 @@ class JSONManager:
             "total_files": total_files,
             "total_downloads": total_downloads,
             "total_views": total_views,
-            "force_join_stats": await self.get_force_join_stats()
         }
 
-    async def get_force_join_stats(self) -> List[Dict]:
+    async def get_force_join_stats(self, bot: Bot) -> List[Dict]:
         """Get statistics for each force join channel"""
         s = await self.get_settings()
         channels = s.get("force_join", [])
         stats = []
-        
         for ch in channels:
             try:
-                count = await self._get_chat_member_count(ch)
+                count = await bot.get_chat_member_count(ch)
                 stats.append({"channel": ch, "member_count": count})
             except:
-                stats.append({"channel": ch, "member_count": 0})
-        
+                stats.append({"channel": ch, "member_count": -1})
         return stats
-
-    async def _get_chat_member_count(self, channel_id: str) -> int:
-        """Get member count of a channel/group"""
-        try:
-            bot = Bot.get_current()
-            count = await bot.get_chat_member_count(channel_id)
-            return count
-        except:
-            return 0
 
     async def get_all_users(self) -> Dict:
         return (await self._read(USERS_FILE))["users"]
@@ -955,7 +927,7 @@ async def menu_files(message: Message):
         return
     await message.answer(f"📂 فایل‌ها ({len(files)})", reply_markup=files_kb(files))
 
-# ==================== ENHANCED STATISTICS ====================
+# ==================== ENHANCED STATISTICS (FIXED) ====================
 @router.message(F.text == "📊 آمار ربات")
 async def menu_stats(message: Message):
     if not await db.is_admin(message.from_user.id):
@@ -971,20 +943,22 @@ async def show_enhanced_stats(message: Message):
     """Show enhanced statistics with table"""
     stats = await db.get_enhanced_stats()
     
-    # Build table
-    table_rows = [
-        ["👥 کل کاربران", format_number(stats["total_users"])],
-        ["🟢 کاربران فعال", format_number(stats["active_users"])],
-        ["📁 کل فایل‌ها", format_number(stats["total_files"])],
-        ["📥 کل دانلودها", format_number(stats["total_downloads"])],
-        ["👁 مجموع بازدیدها", format_number(stats["total_views"])],
-    ]
+    # Build table as simple text (no HTML inside <pre>)
+    lines = []
+    lines.append("┌──────────────────┬────────────┐")
+    lines.append("│     📊 آیتم       │  🔢 تعداد   │")
+    lines.append("├──────────────────┼────────────┤")
+    lines.append(f"│ 👤 کل کاربران     │ {format_number(stats['total_users']):>10} │")
+    lines.append(f"│ 🟢 کاربران فعال   │ {format_number(stats['active_users']):>10} │")
+    lines.append(f"│ 📁 کل فایل‌ها     │ {format_number(stats['total_files']):>10} │")
+    lines.append(f"│ 📥 کل دانلودها    │ {format_number(stats['total_downloads']):>10} │")
+    lines.append(f"│ 👁 مجموع بازدیدها │ {format_number(stats['total_views']):>10} │")
+    lines.append("└──────────────────┴────────────┘")
     
-    table = make_table(table_rows, headers=["📊 آیتم", "🔢 تعداد"])
+    table = "<pre>" + "\n".join(lines) + "</pre>"
     
-    # Edit existing message if it's a callback, otherwise send new
-    if hasattr(message, 'edit_text'):
-        await message.edit_text(table, reply_markup=stats_kb())
+    if isinstance(message, CallbackQuery):
+        await message.message.edit_text(table, reply_markup=stats_kb())
     else:
         await message.answer(table, reply_markup=stats_kb())
 
@@ -1013,9 +987,9 @@ async def force_join_stats_handler(callback: CallbackQuery):
         try:
             count = await bot.get_chat_member_count(ch)
             total_members += count
-            txt += f"🔗 چنل {i} ({ch}): {format_number(count)} عضو\n"
+            txt += f"🔗 چنل {i} ({safe_html(ch)}): {format_number(count)} عضو\n"
         except Exception as e:
-            txt += f"🔗 چنل {i} ({ch}): ❌ دسترسی ندارم\n"
+            txt += f"🔗 چنل {i} ({safe_html(ch)}): ❌ دسترسی ندارم\n"
     
     txt += f"\n➖➖➖➖➖➖➖➖➖➖➖➖➖\n\n"
     txt += f"📌 **مجموع اعضای یکتا:** {format_number(total_members)}\n"
@@ -1023,7 +997,7 @@ async def force_join_stats_handler(callback: CallbackQuery):
     
     await callback.message.edit_text(txt, reply_markup=force_join_stats_kb())
 
-# ==================== REST OF HANDLERS ====================
+# ==================== REST OF HANDLERS (unchanged but working) ====================
 @router.message(F.text == "📢 ارسال همگانی")
 async def menu_broadcast(message: Message, state: FSMContext):
     if not await db.is_admin(message.from_user.id):
@@ -1428,7 +1402,7 @@ async def settings_cb(callback: CallbackQuery):
     await callback.answer()
     await callback.message.edit_text("⚙️ تنظیمات", reply_markup=settings_kb(await db.get_settings()))
 
-# ==================== TEXTS EDITOR (compact - unchanged) ====================
+# ==================== TEXTS EDITOR ====================
 @router.callback_query(F.data == "edit_texts")
 async def texts_menu(callback: CallbackQuery):
     await callback.answer()
