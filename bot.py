@@ -1,7 +1,7 @@
 """
-Telegram File Uploader Bot - v11.2 Professional
+Telegram File Uploader Bot - v11.3 Professional
 Aiogram 3.x | JSON Storage | Railway Ready
-Fixed Statistics Display | Double Line Design | Copy-Friendly Code Blocks
+Statistics with Refresh Button | Code Block Display | Auto Update
 """
 
 import asyncio
@@ -437,8 +437,9 @@ def settings_kb(settings: Dict):
     return b.as_markup()
 
 def stats_kb():
-    """Statistics menu with force join stats button"""
+    """Statistics menu with refresh button"""
     return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 بروزرسانی آمار", callback_data="refresh_stats")],
         [InlineKeyboardButton(text="📊 آمار عضویت اجباری", callback_data="force_join_stats")],
         [InlineKeyboardButton(text="🔙 بازگشت به منو", callback_data="panel")]
     ])
@@ -878,24 +879,30 @@ async def menu_files(message: Message):
         return
     await message.answer(f"📂 فایل‌ها ({len(files)})", reply_markup=files_kb(files))
 
-# ==================== ENHANCED STATISTICS (DOUBLE LINE DESIGN) ====================
+# ==================== ENHANCED STATISTICS WITH REFRESH ====================
 @router.message(F.text == "📊 آمار ربات")
 async def menu_stats(message: Message):
     if not await db.is_admin(message.from_user.id):
         return
-    await show_enhanced_stats(message)
+    await show_stats_message(message)
 
 @router.callback_query(F.data == "show_stats")
 async def stats_callback(callback: CallbackQuery):
     await callback.answer()
-    await show_enhanced_stats(callback.message)
+    await show_stats_message(callback.message)
 
-async def show_enhanced_stats(message: Message):
-    """Show enhanced statistics with double-line design in code block"""
+@router.callback_query(F.data == "refresh_stats")
+async def refresh_stats(callback: CallbackQuery):
+    """Refresh statistics silently - just update the message"""
+    await callback.answer("🔄 در حال بروزرسانی...")
+    await show_stats_message(callback.message)
+
+async def show_stats_message(message: Message):
+    """Show or update statistics with current data"""
     stats = await db.get_enhanced_stats()
     now = datetime.now()
     
-    # Build lines
+    # Build the statistics text
     lines = []
     lines.append("═══════════════════════")
     lines.append("  📊 آمار ربات")
@@ -912,8 +919,11 @@ async def show_enhanced_stats(message: Message):
     
     table = "```\n" + "\n".join(lines) + "\n```"
     
+    # Check if we need to edit or send new
     if isinstance(message, CallbackQuery):
         await message.message.edit_text(table, reply_markup=stats_kb())
+    elif hasattr(message, 'edit_text'):
+        await message.edit_text(table, reply_markup=stats_kb())
     else:
         await message.answer(table, reply_markup=stats_kb())
 
@@ -951,7 +961,7 @@ async def force_join_stats_handler(callback: CallbackQuery):
     
     await callback.message.edit_text(txt, reply_markup=force_join_stats_kb())
 
-# ==================== REST OF HANDLERS ====================
+# ==================== REST OF HANDLERS (unchanged) ====================
 @router.message(F.text == "📢 ارسال همگانی")
 async def menu_broadcast(message: Message, state: FSMContext):
     if not await db.is_admin(message.from_user.id):
