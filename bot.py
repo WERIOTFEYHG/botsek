@@ -845,7 +845,23 @@ async def menu_files(message: Message):
         await message.answer("📂 فایلی نیست.", reply_markup=await get_admin_panel_kb())
         return
     await message.answer(f"📂 فایل‌ها ({len(files)})", reply_markup=files_kb(files))
-# ==================== ENHANCED STATISTICS (FIXED CODE BLOCK) ====================
+
+# ==================== ENHANCED STATISTICS (FIXED) ====================
+@router.message(F.text == "📊 آمار ربات")
+async def menu_stats(message: Message):
+    if not await db.is_admin(message.from_user.id):
+        return
+    await show_stats_message(message, edit_mode=False)
+
+@router.callback_query(F.data == "show_stats")
+async def stats_callback(callback: CallbackQuery):
+    await callback.answer()
+    await show_stats_message(callback.message, edit_mode=True)
+
+@router.callback_query(F.data == "refresh_stats")
+async def refresh_stats(callback: CallbackQuery):
+    await callback.answer("🔄 بروزرسانی شد")
+    await show_stats_message(callback.message, edit_mode=True)
 
 async def show_stats_message(message: Message, edit_mode: bool = False):
     """Show or update statistics"""
@@ -866,13 +882,13 @@ async def show_stats_message(message: Message, edit_mode: bool = False):
     lines.append("═══════════════════════")
     lines.append(f"📅 {now.strftime('%Y/%m/%d')}  ⏰ {now.strftime('%H:%M:%S')}")
     
-    # Use MarkdownV2 code block - this SHOWS the code block style in Telegram
     table = "```\n" + "\n".join(lines) + "\n```"
     
     if edit_mode:
-        await message.edit_text(table, reply_markup=stats_kb(), parse_mode=ParseMode.MARKDOWN_V2)
+        await message.edit_text(table, reply_markup=stats_kb())
     else:
-        await message.answer(table, reply_markup=stats_kb(), parse_mode=ParseMode.MARKDOWN_V2)
+        await message.answer(table, reply_markup=stats_kb())
+
 # ==================== FORCE JOIN STATISTICS ====================
 @router.callback_query(F.data == "force_join_stats")
 async def force_join_stats_handler(callback: CallbackQuery):
