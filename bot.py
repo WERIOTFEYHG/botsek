@@ -1,7 +1,7 @@
 """
-Telegram File Uploader Bot - v7.0 Professional
+Telegram File Uploader Bot - v7.1 Professional
 Aiogram 3.x | JSON Storage | Railway Ready
-Fixed HTML | Smart Validation | Timer Management | Clean UI
+Unlimited Timer | Smart Validation | Professional UI
 """
 
 import asyncio
@@ -55,6 +55,23 @@ def safe_html(text: str) -> str:
     if not text:
         return ""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+def format_time(minutes: int) -> str:
+    """Format minutes to readable Persian time"""
+    if minutes < 60:
+        return f"{minutes} دقیقه"
+    elif minutes < 1440:
+        h = minutes // 60
+        m = minutes % 60
+        if m > 0:
+            return f"{h} ساعت و {m} دقیقه"
+        return f"{h} ساعت"
+    else:
+        d = minutes // 1440
+        h = (minutes % 1440) // 60
+        if h > 0:
+            return f"{d} روز و {h} ساعت"
+        return f"{d} روز"
 
 # ==================== JSON MANAGER ====================
 class JSONManager:
@@ -367,12 +384,12 @@ def admins_kb(admins: Dict):
     return b.as_markup()
 
 def settings_kb(settings: Dict):
-    """Settings menu - Force Join is FIRST"""
+    """Settings menu"""
     timer_val = settings.get("delete_timer", 300)
     if timer_val == 0:
         timer_text = "⏱ تایمر حذف پست: خاموش"
     else:
-        timer_text = f"⏱ تایمر حذف پست: {timer_val // 60} دقیقه"
+        timer_text = f"⏱ تایمر حذف پست: {format_time(timer_val // 60)}"
     
     fj = settings.get("force_join", [])
     fj_count = len(fj)
@@ -386,7 +403,7 @@ def settings_kb(settings: Dict):
     return b.as_markup()
 
 def timer_settings_kb(settings: Dict):
-    """Timer management with on/off and time setting"""
+    """Timer management"""
     timer_val = settings.get("delete_timer", 300)
     
     b = InlineKeyboardBuilder()
@@ -395,8 +412,7 @@ def timer_settings_kb(settings: Dict):
         b.row(InlineKeyboardButton(text="⏱ وضعیت: خاموش 🔴", callback_data="noop"))
         b.row(InlineKeyboardButton(text="🔵 روشن کردن تایمر", callback_data="timer_on"))
     else:
-        timer_minutes = timer_val // 60
-        b.row(InlineKeyboardButton(text=f"⏱ وضعیت: {timer_minutes} دقیقه 🟢", callback_data="noop"))
+        b.row(InlineKeyboardButton(text=f"⏱ وضعیت: {format_time(timer_val // 60)} 🟢", callback_data="noop"))
         b.row(InlineKeyboardButton(text="🔴 خاموش کردن تایمر", callback_data="timer_off"))
     
     b.row(InlineKeyboardButton(text="⏰ تنظیم زمان جدید", callback_data="timer_set"))
@@ -405,13 +421,13 @@ def timer_settings_kb(settings: Dict):
     return b.as_markup()
 
 def back_to_timer_kb():
-    """Back button to timer menu"""
+    """Back to timer menu"""
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 بازگشت به تنظیمات تایمر", callback_data="set_timer")]
     ])
 
 def force_join_admin_kb(channels: List[str]):
-    """Force join management for admin panel"""
+    """Force join management"""
     b = InlineKeyboardBuilder()
     
     if channels:
@@ -436,10 +452,7 @@ def force_join_user_kb(channels: List[str], not_joined: List[tuple]):
         else:
             url = f"https://t.me/c/{ch.replace('-100','')}"
         
-        b.row(InlineKeyboardButton(
-            text=f"📢 چنل {idx}",
-            url=url
-        ))
+        b.row(InlineKeyboardButton(text=f"📢 چنل {idx}", url=url))
     
     b.row(InlineKeyboardButton(text="✅ بررسی عضویت", callback_data="fj_check"))
     return b.as_markup()
@@ -1096,7 +1109,7 @@ async def save_welcome(message: Message, state: FSMContext):
     await message.answer("✅ ذخیره شد.", reply_markup=admin_main_menu())
     await state.clear()
 
-# ==================== TIMER MANAGEMENT ====================
+# ==================== TIMER MANAGEMENT (UNLIMITED) ====================
 @router.callback_query(F.data == "set_timer")
 async def timer_menu(callback: CallbackQuery):
     """Show timer management menu"""
@@ -1107,7 +1120,7 @@ async def timer_menu(callback: CallbackQuery):
     if timer_val == 0:
         status = "🔴 خاموش"
     else:
-        status = f"🟢 {timer_val // 60} دقیقه"
+        status = f"🟢 {format_time(timer_val // 60)}"
     
     await callback.message.edit_text(
         f"⏱ **تنظیمات تایمر حذف پست**\n\n"
@@ -1154,10 +1167,13 @@ async def timer_set_start(callback: CallbackQuery, state: FSMContext):
     
     await callback.message.edit_text(
         "⏰ **لطفاً زمان را برحسب دقیقه وارد نمایید:**\n\n"
-        "📌 حداقل: ۱ دقیقه\n"
-        "📌 حداکثر: ۶۰ دقیقه\n"
-        "📌 برای خاموش کردن: ۰\n\n"
-        "مثال: ۱۰",
+        "📌 ۰ = خاموش کردن تایمر\n"
+        "📌 هر عدد دلخواه = زمان به دقیقه\n\n"
+        "📝 مثال‌ها:\n"
+        "• ۱۰ = ۱۰ دقیقه\n"
+        "• ۱۲۰ = ۲ ساعت\n"
+        "• ۱۴۴۰ = ۲۴ ساعت (۱ روز)\n"
+        "• ۱۰۰۸۰ = ۷ روز (۱ هفته)",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_timer")]
         ])
@@ -1165,7 +1181,7 @@ async def timer_set_start(callback: CallbackQuery, state: FSMContext):
 
 @router.message(SettingsState.waiting_timer)
 async def timer_set_save(message: Message, state: FSMContext):
-    """Save new timer value"""
+    """Save new timer value - No limits"""
     try:
         mins = int(message.text)
         
@@ -1180,26 +1196,28 @@ async def timer_set_save(message: Message, state: FSMContext):
                 reply_markup=back_to_timer_kb()
             )
         
-        elif 1 <= mins <= 60:
-            await db.update_setting("delete_timer", mins * 60)
-            await db.add_log("settings", message.from_user.id, f"Timer set to {mins} min")
-            
+        elif mins < 0:
             await message.answer(
-                f"✅ **با موفقیت تنظیم شد!**\n\n"
-                f"⏱ مدت زمان: {mins} دقیقه 🟢\n"
-                f"📌 پیام‌های فایل پس از {mins} دقیقه حذف می‌شوند.",
-                reply_markup=back_to_timer_kb()
-            )
-        
-        else:
-            await message.answer(
-                "❌ عدد باید بین ۰ تا ۶۰ باشد.\n"
-                "🔄 لطفاً دوباره تلاش کنید:",
+                "❌ عدد نمی‌تواند منفی باشد.\n"
+                "🔄 لطفاً یک عدد مثبت وارد کنید:",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_timer")]
                 ])
             )
             return
+        
+        else:
+            await db.update_setting("delete_timer", mins * 60)
+            await db.add_log("settings", message.from_user.id, f"Timer set to {mins} min")
+            
+            time_display = format_time(mins)
+            
+            await message.answer(
+                f"✅ **با موفقیت تنظیم شد!**\n\n"
+                f"⏱ مدت زمان: {time_display} 🟢\n"
+                f"📌 پیام‌های فایل پس از {time_display} حذف می‌شوند.",
+                reply_markup=back_to_timer_kb()
+            )
     
     except:
         await message.answer(
