@@ -1,7 +1,7 @@
 """
-Telegram File Uploader Bot - v11.1 Professional - FIXED STATS
+Telegram File Uploader Bot - v11.2 Professional
 Aiogram 3.x | JSON Storage | Railway Ready
-Enhanced Statistics | Force Join Stats | Table Display FIXED
+Fixed Statistics Display | Double Line Design | Copy-Friendly Code Blocks
 """
 
 import asyncio
@@ -72,42 +72,6 @@ def format_time(minutes: int) -> str:
 def format_number(num: int) -> str:
     """Format large numbers with commas"""
     return f"{num:,}"
-
-def make_table(rows: List[List[str]], headers: List[str] = None) -> str:
-    """Create a beautiful table using HTML <pre> tag"""
-    result = "\n"
-    
-    # Calculate column widths
-    col_widths = [0] * len(rows[0])
-    if headers:
-        for i, h in enumerate(headers):
-            col_widths[i] = max(col_widths[i], len(h) + 4)
-    for row in rows:
-        for i, cell in enumerate(row):
-            col_widths[i] = max(col_widths[i], len(str(cell)) + 4)
-    
-    # Top border
-    result += "┌" + "┬".join("─" * w for w in col_widths) + "┐\n"
-    
-    # Headers
-    if headers:
-        result += "│"
-        for i, h in enumerate(headers):
-            result += f"{h:^{col_widths[i]}}│"
-        result += "\n"
-        result += "├" + "┼".join("─" * w for w in col_widths) + "┤\n"
-    
-    # Rows
-    for idx, row in enumerate(rows):
-        result += "│"
-        for i, cell in enumerate(row):
-            result += f"{str(cell):^{col_widths[i]}}│"
-        result += "\n"
-    
-    # Bottom border
-    result += "└" + "┴".join("─" * w for w in col_widths) + "┘"
-    
-    return f"<pre>{result}</pre>"
 
 def get_default_texts():
     return {
@@ -334,7 +298,7 @@ class JSONManager:
             await self._write(FILES_FILE, d)
 
     async def get_enhanced_stats(self) -> Dict:
-        """Get enhanced statistics with active users"""
+        """Get enhanced statistics"""
         users = await self._read(USERS_FILE)
         files = await self._read(FILES_FILE)
         
@@ -352,19 +316,6 @@ class JSONManager:
             "total_downloads": total_downloads,
             "total_views": total_views,
         }
-
-    async def get_force_join_stats(self, bot: Bot) -> List[Dict]:
-        """Get statistics for each force join channel"""
-        s = await self.get_settings()
-        channels = s.get("force_join", [])
-        stats = []
-        for ch in channels:
-            try:
-                count = await bot.get_chat_member_count(ch)
-                stats.append({"channel": ch, "member_count": count})
-            except:
-                stats.append({"channel": ch, "member_count": -1})
-        return stats
 
     async def get_all_users(self) -> Dict:
         return (await self._read(USERS_FILE))["users"]
@@ -927,7 +878,7 @@ async def menu_files(message: Message):
         return
     await message.answer(f"📂 فایل‌ها ({len(files)})", reply_markup=files_kb(files))
 
-# ==================== ENHANCED STATISTICS (FIXED) ====================
+# ==================== ENHANCED STATISTICS (DOUBLE LINE DESIGN) ====================
 @router.message(F.text == "📊 آمار ربات")
 async def menu_stats(message: Message):
     if not await db.is_admin(message.from_user.id):
@@ -940,22 +891,26 @@ async def stats_callback(callback: CallbackQuery):
     await show_enhanced_stats(callback.message)
 
 async def show_enhanced_stats(message: Message):
-    """Show enhanced statistics with table"""
+    """Show enhanced statistics with double-line design in code block"""
     stats = await db.get_enhanced_stats()
+    now = datetime.now()
     
-    # Build table as simple text (no HTML inside <pre>)
+    # Build lines
     lines = []
-    lines.append("┌──────────────────┬────────────┐")
-    lines.append("│     📊 آیتم       │  🔢 تعداد   │")
-    lines.append("├──────────────────┼────────────┤")
-    lines.append(f"│ 👤 کل کاربران     │ {format_number(stats['total_users']):>10} │")
-    lines.append(f"│ 🟢 کاربران فعال   │ {format_number(stats['active_users']):>10} │")
-    lines.append(f"│ 📁 کل فایل‌ها     │ {format_number(stats['total_files']):>10} │")
-    lines.append(f"│ 📥 کل دانلودها    │ {format_number(stats['total_downloads']):>10} │")
-    lines.append(f"│ 👁 مجموع بازدیدها │ {format_number(stats['total_views']):>10} │")
-    lines.append("└──────────────────┴────────────┘")
+    lines.append("═══════════════════════")
+    lines.append("  📊 آمار ربات")
+    lines.append("═══════════════════════")
+    lines.append("")
+    lines.append(f"👤 کل کاربران: {format_number(stats['total_users'])}")
+    lines.append(f"🟢 کاربران فعال: {format_number(stats['active_users'])}")
+    lines.append(f"📁 کل فایل‌ها: {format_number(stats['total_files'])}")
+    lines.append(f"📥 کل دانلودها: {format_number(stats['total_downloads'])}")
+    lines.append(f"👁 مجموع بازدیدها: {format_number(stats['total_views'])}")
+    lines.append("")
+    lines.append("═══════════════════════")
+    lines.append(f"📅 {now.strftime('%Y/%m/%d')}  ⏰ {now.strftime('%H:%M:%S')}")
     
-    table = "<pre>" + "\n".join(lines) + "</pre>"
+    table = "```\n" + "\n".join(lines) + "\n```"
     
     if isinstance(message, CallbackQuery):
         await message.message.edit_text(table, reply_markup=stats_kb())
@@ -980,7 +935,6 @@ async def force_join_stats_handler(callback: CallbackQuery):
     
     txt = "📊 **آمار عضویت اجباری**\n\n"
     total_members = 0
-    
     bot = callback.bot
     
     for i, ch in enumerate(channels, 1):
@@ -988,7 +942,7 @@ async def force_join_stats_handler(callback: CallbackQuery):
             count = await bot.get_chat_member_count(ch)
             total_members += count
             txt += f"🔗 چنل {i} ({safe_html(ch)}): {format_number(count)} عضو\n"
-        except Exception as e:
+        except:
             txt += f"🔗 چنل {i} ({safe_html(ch)}): ❌ دسترسی ندارم\n"
     
     txt += f"\n➖➖➖➖➖➖➖➖➖➖➖➖➖\n\n"
@@ -997,7 +951,7 @@ async def force_join_stats_handler(callback: CallbackQuery):
     
     await callback.message.edit_text(txt, reply_markup=force_join_stats_kb())
 
-# ==================== REST OF HANDLERS (unchanged but working) ====================
+# ==================== REST OF HANDLERS ====================
 @router.message(F.text == "📢 ارسال همگانی")
 async def menu_broadcast(message: Message, state: FSMContext):
     if not await db.is_admin(message.from_user.id):
