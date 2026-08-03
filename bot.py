@@ -1,7 +1,7 @@
 """
-Telegram File Uploader Bot - v9.1 Professional
+Telegram File Uploader Bot - v10.0 Professional
 Aiogram 3.x | JSON Storage | Railway Ready
-ON/OFF Toggle in Main Panel | Maintenance Mode | All Features
+VIP Users | Smart Admin Add | Username Support | Forward Support
 """
 
 import asyncio
@@ -100,7 +100,7 @@ class JSONManager:
         defaults = {
             USERS_FILE: {"users": {}},
             FILES_FILE: {"files": {}},
-            ADMINS_FILE: {"admins": {}},
+            ADMINS_FILE: {"admins": {}, "vip_users": {}},
             SETTINGS_FILE: {
                 "delete_timer": 300,
                 "force_join": [],
@@ -126,8 +126,7 @@ class JSONManager:
                 await f.write(json.dumps(data, indent=2, ensure_ascii=False))
 
     async def is_bot_active(self) -> bool:
-        s = await self.get_settings()
-        return s.get("bot_active", True)
+        return (await self.get_settings()).get("bot_active", True)
 
     async def toggle_bot(self) -> bool:
         s = await self.get_settings()
@@ -147,8 +146,7 @@ class JSONManager:
             await self._write(USERS_FILE, d)
 
     async def is_banned(self, uid: int) -> bool:
-        d = await self._read(USERS_FILE)
-        return d["users"].get(str(uid), {}).get("banned", False)
+        return (await self._read(USERS_FILE))["users"].get(str(uid), {}).get("banned", False)
 
     async def toggle_ban(self, uid: int) -> str:
         d = await self._read(USERS_FILE)
@@ -158,26 +156,85 @@ class JSONManager:
             return "✅ آزاد شد" if not d["users"][str(uid)]["banned"] else "🚫 مسدود شد"
         return "کاربر پیدا نشد"
 
+    # ==================== ADMINS & VIP ====================
     async def is_admin(self, uid: int) -> bool:
         d = await self._read(ADMINS_FILE)
-        return str(uid) in d["admins"] or uid == ADMIN_ID
+        return str(uid) in d.get("admins", {}) or uid == ADMIN_ID
 
-    async def add_admin(self, uid: int, role: str = "admin"):
+    async def is_vip(self, uid: int) -> bool:
         d = await self._read(ADMINS_FILE)
-        d["admins"][str(uid)] = {"role": role, "added": datetime.now().isoformat()}
+        return str(uid) in d.get("vip_users", {})
+
+    async def is_privileged(self, uid: int) -> bool:
+        """Check if user is admin OR VIP - both skip restrictions"""
+        return await self.is_admin(uid) or await self.is_vip(uid)
+
+    async def add_admin(self, uid: int, username: str = "", role: str = "admin"):
+        d = await self._read(ADMINS_FILE)
+        if "admins" not in d:
+            d["admins"] = {}
+        d["admins"][str(uid)] = {
+            "role": role, "username": username,
+            "added": datetime.now().isoformat()
+        }
         await self._write(ADMINS_FILE, d)
 
     async def remove_admin(self, uid: int) -> bool:
         d = await self._read(ADMINS_FILE)
-        if str(uid) in d["admins"] and str(uid) != str(ADMIN_ID):
+        if str(uid) in d.get("admins", {}) and str(uid) != str(ADMIN_ID):
             del d["admins"][str(uid)]
             await self._write(ADMINS_FILE, d)
             return True
         return False
 
     async def get_admins(self) -> Dict:
-        return (await self._read(ADMINS_FILE))["admins"]
+        return (await self._read(ADMINS_FILE)).get("admins", {})
 
+    async def add_vip(self, uid: int, username: str = ""):
+        d = await self._read(ADMINS_FILE)
+        if "vip_users" not in d:
+            d["vip_users"] = {}
+        d["vip_users"][str(uid)] = {
+            "username": username,
+            "added": datetime.now().isoformat()
+        }
+        await self._write(ADMINS_FILE, d)
+
+    async def remove_vip(self, uid: int) -> bool:
+        d = await self._read(ADMINS_FILE)
+        if str(uid) in d.get("vip_users", {}):
+            del d["vip_users"][str(uid)]
+            await self._write(ADMINS_FILE, d)
+            return True
+        return False
+
+    async def get_vips(self) -> Dict:
+        return (await self._read(ADMINS_FILE)).get("vip_users", {})
+
+    # Resolve user ID from username or forward
+    async def resolve_user_id(self, bot: Bot, text: str = None, forward_msg: Message = None) -> Optional[tuple]:
+        """Returns (user_id, username) or None"""
+        if forward_msg and forward_msg.forward_from:
+            user = forward_msg.forward_from
+            return (user.id, user.username or "")
+        
+        if text:
+            text = text.strip().lstrip("@")
+            try:
+                # Try as numeric ID
+                uid = int(text)
+                return (uid, "")
+            except:
+                # Try as username
+                try:
+                    # We can't directly get user by username via Bot API without chat
+                    # Return None and let caller handle
+                    return None
+                except:
+                    return None
+        return None
+
+    # ==================== FILES ====================
     async def add_file(self, data: Dict) -> str:
         d = await self._read(FILES_FILE)
         fid = data["id"]
@@ -222,6 +279,7 @@ class JSONManager:
             d["files"][fid]["password"] = password
             await self._write(FILES_FILE, d)
 
+    # ==================== STATS & USERS ====================
     async def get_stats(self) -> Dict:
         users = await self._read(USERS_FILE)
         files = await self._read(FILES_FILE)
@@ -283,31 +341,9 @@ db = JSONManager()
 
 # ==================== KEYBOARDS ====================
 
-def admin_main_menu():
-    """Main panel with ON/OFF toggle button"""
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📤 آپلود فایل جدید")],
-            [KeyboardButton(text="📂 مدیریت فایل‌ها"), KeyboardButton(text="📊 آمار ربات")],
-            [KeyboardButton(text="📢 ارسال همگانی"), KeyboardButton(text="⚙️ تنظیمات")],
-            [KeyboardButton(text="👥 کاربران"), KeyboardButton(text="👮 ادمین‌ها")],
-            [KeyboardButton(text="📜 گزارشات"), KeyboardButton(text="🔗 لینک‌های فعال")],
-            [KeyboardButton(text="💾 پشتیبان‌گیری")],
-            [KeyboardButton(text="🟢 خاموش/روشن کردن ربات")]  # This will be updated dynamically
-        ],
-        resize_keyboard=True,
-        input_field_placeholder="👑 یک گزینه انتخاب کنید...",
-        selective=True
-    )
-
 async def get_admin_panel_kb():
-    """Get admin panel with dynamic ON/OFF button"""
     is_active = await db.is_bot_active()
-    
-    if is_active:
-        toggle_text = "🟢 ربات فعال است (کلیک برای خاموش)"
-    else:
-        toggle_text = "🔴 ربات خاموش است (کلیک برای روشن)"
+    toggle_text = "🟢 ربات فعال است (کلیک برای خاموش)" if is_active else "🔴 ربات خاموش است (کلیک برای روشن)"
     
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -435,13 +471,51 @@ def user_actions_kb(uid: str):
         [InlineKeyboardButton(text="🔙 کاربران", callback_data="users_list")]
     ])
 
-def admins_kb(admins: Dict):
+# ==================== ADMINS & VIP KEYBOARD ====================
+def admins_vip_menu_kb():
+    """Main menu for admins & VIP management"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👮 مدیریت ادمین‌ها", callback_data="manage_admins")],
+        [InlineKeyboardButton(text="⭐ مدیریت کاربران VIP", callback_data="manage_vips")],
+        [InlineKeyboardButton(text="📋 مشاهده لیست کامل", callback_data="list_all_privileged")],
+        [InlineKeyboardButton(text="🔙 بازگشت به منو", callback_data="panel")]
+    ])
+
+def manage_admins_kb(admins: Dict):
+    """Keyboard for admin management"""
     b = InlineKeyboardBuilder()
-    for aid, a in admins.items():
-        icon = "👑" if a['role'] == 'owner' else "👮"
-        b.row(InlineKeyboardButton(text=f"{icon} {aid} - {a['role']}", callback_data=f"admin_{aid}"))
-    b.row(InlineKeyboardButton(text="➕ افزودن", callback_data="add_admin"))
-    b.row(InlineKeyboardButton(text="🔙 بازگشت", callback_data="panel"))
+    
+    if admins:
+        for aid, a in admins.items():
+            icon = "👑" if a.get('role') == 'owner' else "👮"
+            uname = a.get('username', '')
+            display = f"@{uname}" if uname else f"ID: {aid}"
+            b.row(InlineKeyboardButton(
+                text=f"❌ {display} - {a.get('role','admin')}",
+                callback_data=f"rem_admin_{aid}"
+            ))
+    
+    b.row(InlineKeyboardButton(text="➕ افزودن ادمین با یوزرنیم", callback_data="add_admin_user"))
+    b.row(InlineKeyboardButton(text="📤 افزودن ادمین با فوروارد", callback_data="add_admin_forward"))
+    b.row(InlineKeyboardButton(text="🔙 بازگشت", callback_data="admins_menu"))
+    return b.as_markup()
+
+def manage_vips_kb(vips: Dict):
+    """Keyboard for VIP management"""
+    b = InlineKeyboardBuilder()
+    
+    if vips:
+        for vid, v in vips.items():
+            uname = v.get('username', '')
+            display = f"@{uname}" if uname else f"ID: {vid}"
+            b.row(InlineKeyboardButton(
+                text=f"❌ {display}",
+                callback_data=f"rem_vip_{vid}"
+            ))
+    
+    b.row(InlineKeyboardButton(text="➕ افزودن VIP با یوزرنیم", callback_data="add_vip_user"))
+    b.row(InlineKeyboardButton(text="📤 افزودن VIP با فوروارد", callback_data="add_vip_forward"))
+    b.row(InlineKeyboardButton(text="🔙 بازگشت", callback_data="admins_menu"))
     return b.as_markup()
 
 def texts_editor_kb():
@@ -527,6 +601,10 @@ class SettingsState(StatesGroup):
     waiting_logchan = State()
     waiting_forcejoin = State()
     waiting_text = State()
+    waiting_admin_username = State()  # NEW: for adding admin by username
+    waiting_vip_username = State()    # NEW: for adding VIP by username
+    waiting_admin_forward = State()   # NEW: for adding admin by forward
+    waiting_vip_forward = State()     # NEW: for adding VIP by forward
 
 class BroadcastState(StatesGroup):
     waiting = State()
@@ -552,36 +630,38 @@ async def start_cmd(message: Message, state: FSMContext):
     if len(args) > 1:
         file_id = args[1]
         
-        if not await db.is_bot_active():
+        if not await db.is_bot_active() and not await db.is_privileged(user.id):
             texts = await db.get_texts()
             await message.answer(texts.get("maintenance_text", "🔧 در حال بروزرسانی"), reply_markup=maintenance_kb(file_id))
             return
         
         file_data = await db.get_file(file_id)
         if file_data:
-            settings = await db.get_settings()
-            force_channels = settings.get("force_join", [])
-            
-            if force_channels:
-                not_joined = await check_user_joined(message.bot, user.id, force_channels)
-                if not_joined:
+            # VIP & Admin users skip all restrictions
+            if not await db.is_privileged(user.id):
+                settings = await db.get_settings()
+                force_channels = settings.get("force_join", [])
+                
+                if force_channels:
+                    not_joined = await check_user_joined(message.bot, user.id, force_channels)
+                    if not_joined:
+                        await state.update_data(pending_file=file_id)
+                        texts = await db.get_texts()
+                        await message.answer(texts.get("force_join_text", "📢 عضو شوید"), reply_markup=force_join_user_kb(force_channels, not_joined))
+                        return
+                
+                if file_data.get("password"):
                     await state.update_data(pending_file=file_id)
+                    await state.set_state(PasswordState.waiting)
                     texts = await db.get_texts()
-                    await message.answer(texts.get("force_join_text", "📢 عضو شوید"), reply_markup=force_join_user_kb(force_channels, not_joined))
+                    await message.answer(texts.get("password_text", "🔒 رمز:"), reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="🔙 انصراف", callback_data="cancel_download")]
+                    ]))
                     return
             
-            if file_data.get("password"):
-                await state.update_data(pending_file=file_id)
-                await state.set_state(PasswordState.waiting)
-                texts = await db.get_texts()
-                await message.answer(texts.get("password_text", "🔒 رمز:"), reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🔙 انصراف", callback_data="cancel_download")]
-                ]))
-                return
-            else:
-                await send_file_to_user(message, file_data)
-                await notify_admins_download(message.bot, file_data, user)
-                return
+            await send_file_to_user(message, file_data)
+            await notify_admins_download(message.bot, file_data, user)
+            return
         else:
             texts = await db.get_texts()
             await message.answer(texts.get("file_not_found", "❌ پیدا نشد."))
@@ -807,14 +887,207 @@ async def menu_users(message: Message):
         return
     await message.answer(f"👥 کاربران ({len(users)})", reply_markup=users_kb(users))
 
+# ==================== ADMINS & VIP MENU ====================
 @router.message(F.text == "👮 ادمین‌ها")
-async def menu_admins(message: Message):
+async def menu_admins_vip(message: Message):
     if not await db.is_admin(message.from_user.id):
         return
-    admins = await db.get_admins()
-    txt = "👮 ادمین‌ها:\n" + "\n".join([f"• <code>{safe_html(str(aid))}</code> - {a['role']}" for aid, a in admins.items()])
-    await message.answer(txt, reply_markup=admins_kb(admins))
+    await message.answer(
+        "👮 **مدیریت ادمین‌ها و کاربران VIP**\n\n"
+        "👮 ادمین‌ها: دسترسی به پنل مدیریت\n"
+        "⭐ VIP: دانلود بدون محدودیت (بدون رمز و عضویت اجباری)",
+        reply_markup=admins_vip_menu_kb()
+    )
 
+@router.callback_query(F.data == "admins_menu")
+async def admins_vip_menu_cb(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.edit_text(
+        "👮 **مدیریت ادمین‌ها و کاربران VIP**",
+        reply_markup=admins_vip_menu_kb()
+    )
+
+# --- MANAGE ADMINS ---
+@router.callback_query(F.data == "manage_admins")
+async def manage_admins(callback: CallbackQuery):
+    await callback.answer()
+    admins = await db.get_admins()
+    await callback.message.edit_text("👮 **مدیریت ادمین‌ها**\n\nبرای افزودن ادمین جدید از دکمه‌ها استفاده کنید.", reply_markup=manage_admins_kb(admins))
+
+@router.callback_query(F.data == "add_admin_user")
+async def add_admin_by_username(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(SettingsState.waiting_admin_username)
+    await callback.message.edit_text(
+        "👮 **افزودن ادمین با یوزرنیم**\n\n"
+        "یوزرنیم کاربر را با @ یا بدون @ ارسال کنید:\n"
+        "مثال: @username یا username",
+        reply_markup=back_inline("manage_admins")
+    )
+
+@router.callback_query(F.data == "add_admin_forward")
+async def add_admin_by_forward(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(SettingsState.waiting_admin_forward)
+    await callback.message.edit_text(
+        "📤 **افزودن ادمین با فوروارد**\n\n"
+        "یک پیام از کاربر مورد نظر را فوروارد کنید.",
+        reply_markup=back_inline("manage_admins")
+    )
+
+@router.message(SettingsState.waiting_admin_username)
+async def save_admin_username(message: Message, state: FSMContext):
+    username = message.text.strip().lstrip("@")
+    
+    # We need to find the user ID from username
+    # Telegram Bot API doesn't have direct "get user by username"
+    # But we can try to get chat info for @username
+    try:
+        chat = await message.bot.get_chat(f"@{username}")
+        if chat.type == "private":
+            uid = chat.id
+            await db.add_admin(uid, username)
+            await db.add_log("admin_add", message.from_user.id, f"Added admin @{username} ({uid})")
+            await message.answer(f"✅ ادمین @{username} با موفقیت اضافه شد.", reply_markup=await get_admin_panel_kb())
+            await state.clear()
+        else:
+            await message.answer("❌ این یوزرنیم متعلق به یک کاربر خصوصی نیست.\n🔄 دوباره تلاش کنید:")
+            return
+    except Exception as e:
+        await message.answer(
+            f"❌ خطا: کاربر پیدا نشد یا با ربات تعامل نداشته.\n"
+            f"مطمئن شوید کاربر حداقل یکبار ربات را استارت زده باشد.\n\n"
+            f"🔄 می‌توانید از فوروارد پیام کاربر استفاده کنید.\n"
+            f"یا آیدی عددی را مستقیماً وارد کنید:",
+            reply_markup=back_inline("manage_admins")
+        )
+        return
+
+@router.message(SettingsState.waiting_admin_forward)
+async def save_admin_forward(message: Message, state: FSMContext):
+    if message.forward_from:
+        user = message.forward_from
+        await db.add_admin(user.id, user.username or "")
+        await db.add_log("admin_add", message.from_user.id, f"Added admin {user.id} (@{user.username or ''})")
+        await message.answer(f"✅ ادمین {user.first_name} (@{user.username or 'بدون یوزرنیم'}) اضافه شد.", reply_markup=await get_admin_panel_kb())
+        await state.clear()
+    else:
+        await message.answer("❌ پیام فوروارد شده معتبر نیست. لطفاً پیام را از کاربر فوروارد کنید.\n🔄 دوباره تلاش کنید:")
+        return
+
+@router.callback_query(F.data.startswith("rem_admin_"))
+async def remove_admin(callback: CallbackQuery):
+    aid = callback.data.replace("rem_admin_", "")
+    if aid == str(ADMIN_ID):
+        await callback.answer("❌ مالک اصلی حذف نمی‌شود.", show_alert=True)
+        return
+    if await db.remove_admin(int(aid)):
+        await callback.answer("✅ ادمین حذف شد.")
+    else:
+        await callback.answer("❌ خطا.", show_alert=True)
+    await manage_admins(callback)
+
+# --- MANAGE VIPs ---
+@router.callback_query(F.data == "manage_vips")
+async def manage_vips(callback: CallbackQuery):
+    await callback.answer()
+    vips = await db.get_vips()
+    await callback.message.edit_text("⭐ **مدیریت کاربران VIP**\n\nVIP ها بدون محدودیت فایل دریافت می‌کنند.", reply_markup=manage_vips_kb(vips))
+
+@router.callback_query(F.data == "add_vip_user")
+async def add_vip_by_username(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(SettingsState.waiting_vip_username)
+    await callback.message.edit_text(
+        "⭐ **افزودن VIP با یوزرنیم**\n\n"
+        "یوزرنیم کاربر را با @ یا بدون @ ارسال کنید:",
+        reply_markup=back_inline("manage_vips")
+    )
+
+@router.callback_query(F.data == "add_vip_forward")
+async def add_vip_by_forward(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(SettingsState.waiting_vip_forward)
+    await callback.message.edit_text(
+        "📤 **افزودن VIP با فوروارد**\n\n"
+        "یک پیام از کاربر مورد نظر را فوروارد کنید.",
+        reply_markup=back_inline("manage_vips")
+    )
+
+@router.message(SettingsState.waiting_vip_username)
+async def save_vip_username(message: Message, state: FSMContext):
+    username = message.text.strip().lstrip("@")
+    try:
+        chat = await message.bot.get_chat(f"@{username}")
+        if chat.type == "private":
+            uid = chat.id
+            await db.add_vip(uid, username)
+            await db.add_log("vip_add", message.from_user.id, f"Added VIP @{username} ({uid})")
+            await message.answer(f"✅ کاربر VIP @{username} با موفقیت اضافه شد.", reply_markup=await get_admin_panel_kb())
+            await state.clear()
+        else:
+            await message.answer("❌ این یوزرنیم متعلق به یک کاربر خصوصی نیست.\n🔄 دوباره تلاش کنید:")
+            return
+    except:
+        await message.answer(
+            f"❌ کاربر پیدا نشد.\n🔄 می‌توانید از فوروارد یا آیدی عددی استفاده کنید:",
+            reply_markup=back_inline("manage_vips")
+        )
+        return
+
+@router.message(SettingsState.waiting_vip_forward)
+async def save_vip_forward(message: Message, state: FSMContext):
+    if message.forward_from:
+        user = message.forward_from
+        await db.add_vip(user.id, user.username or "")
+        await db.add_log("vip_add", message.from_user.id, f"Added VIP {user.id}")
+        await message.answer(f"✅ کاربر VIP {user.first_name} اضافه شد.", reply_markup=await get_admin_panel_kb())
+        await state.clear()
+    else:
+        await message.answer("❌ پیام فوروارد شده معتبر نیست.\n🔄 دوباره تلاش کنید:")
+        return
+
+@router.callback_query(F.data.startswith("rem_vip_"))
+async def remove_vip(callback: CallbackQuery):
+    vid = callback.data.replace("rem_vip_", "")
+    if await db.remove_vip(int(vid)):
+        await callback.answer("✅ VIP حذف شد.")
+    else:
+        await callback.answer("❌ خطا.", show_alert=True)
+    await manage_vips(callback)
+
+# --- LIST ALL ---
+@router.callback_query(F.data == "list_all_privileged")
+async def list_all_privileged(callback: CallbackQuery):
+    await callback.answer()
+    admins = await db.get_admins()
+    vips = await db.get_vips()
+    
+    txt = "👮 **لیست کامل ادمین‌ها و VIP ها**\n\n"
+    
+    txt += "━ **ادمین‌ها** ━\n"
+    if admins:
+        for aid, a in admins.items():
+            uname = a.get('username', '')
+            display = f"@{uname}-admin" if uname else f"{aid}-admin"
+            txt += f"• {display}\n"
+    else:
+        txt += "• هیچ ادمینی نیست\n"
+    
+    txt += "\n━ **VIP ها** ━\n"
+    if vips:
+        for vid, v in vips.items():
+            uname = v.get('username', '')
+            display = f"@{uname}-vip" if uname else f"{vid}-vip"
+            txt += f"• {display}\n"
+    else:
+        txt += "• هیچ VIP ای نیست\n"
+    
+    await callback.message.edit_text(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 بازگشت", callback_data="admins_menu")]
+    ]))
+
+# ==================== REST OF HANDLERS (same as before) ====================
 @router.message(F.text == "📜 گزارشات")
 async def menu_logs(message: Message):
     if not await db.is_admin(message.from_user.id):
@@ -849,25 +1122,20 @@ async def menu_backup(message: Message):
     await message.answer_document(FSInputFile(fn), caption="✅ پشتیبان آماده")
     await message.answer("💾 آماده شد.", reply_markup=await get_admin_panel_kb())
 
-# ==================== BOT ON/OFF TOGGLE (in main panel) ====================
 @router.message(F.text.contains("ربات فعال است"))
 @router.message(F.text.contains("ربات خاموش است"))
 async def toggle_bot_from_panel(message: Message):
-    """Toggle bot ON/OFF from main ReplyKeyboard"""
     if not await db.is_admin(message.from_user.id):
         return
-    
     new_status = await db.toggle_bot()
     await db.add_log("toggle", message.from_user.id, f"Bot {'ON' if new_status else 'OFF'}")
-    
     kb = await get_admin_panel_kb()
-    
     if new_status:
-        await message.answer("🟢 **ربات روشن شد!**\n\nربات آماده سرویس‌دهی است.", reply_markup=kb)
+        await message.answer("🟢 **ربات روشن شد!**", reply_markup=kb)
     else:
-        await message.answer("🔴 **ربات خاموش شد!**\n\nکاربران پیام بروزرسانی دریافت می‌کنند.", reply_markup=kb)
+        await message.answer("🔴 **ربات خاموش شد!**", reply_markup=kb)
 
-# ==================== UPLOAD ====================
+# ==================== UPLOAD (compact) ====================
 @router.message(UploadState.waiting)
 async def upload_receive(message: Message, state: FSMContext):
     file_id, file_type, file_name = None, "document", ""
@@ -921,23 +1189,20 @@ async def upload_password(message: Message, state: FSMContext):
 async def finalize_upload(message: Message, state: FSMContext, admin_id: int):
     data = await state.get_data()
     fid = str(uuid.uuid4())[:8]
-    
     await db.add_file({"id": fid, "file_id": data["file_id"], "type": data["file_type"], "caption": data.get("caption", ""), "file_name": data.get("file_name", ""), "password": data.get("password", ""), "admin": admin_id})
     await db.add_log("upload", admin_id, f"Uploaded {fid}")
     
     bot = await message.bot.get_me()
     link = f"https://t.me/{bot.username}?start={fid}"
     icon = {"photo": "🖼", "video": "🎬", "audio": "🎵", "voice": "🎤", "animation": "✨", "sticker": "🏷", "document": "📄"}.get(data["file_type"], "📁")
-    
-    txt = f"✅ آپلود موفق!\n\n{icon} فایل\n🆔: <code>{fid}</code>\n📝: {safe_html(data.get('caption',''))}\n"
+    txt = f"✅ آپلود موفق!\n\n{icon}\n🆔: <code>{fid}</code>\n📝: {safe_html(data.get('caption',''))}\n"
     if data.get("password"):
         txt += f"🔑: <code>{safe_html(data['password'])}</code>\n\n"
     txt += f"🔗: <a href='{link}'>کلیک</a>\n<code>{link}</code>"
-    
     await message.answer(txt, reply_markup=await get_admin_panel_kb())
     await state.clear()
 
-# ==================== INLINE CALLBACKS ====================
+# ==================== INLINE CALLBACKS (compact) ====================
 @router.callback_query(F.data == "panel")
 async def panel_callback(callback: CallbackQuery):
     await callback.answer()
@@ -987,8 +1252,7 @@ async def get_link(callback: CallbackQuery):
     if f:
         bot = await callback.bot.get_me()
         link = f"https://t.me/{bot.username}?start={f['id']}"
-        pw = f"\n🔑: <code>{safe_html(f['password'])}</code>" if f.get("password") else ""
-        await callback.message.answer(f"🔗 <a href='{link}'>کلیک</a>\n<code>{link}</code>{pw}")
+        await callback.message.answer(f"🔗 <a href='{link}'>کلیک</a>\n<code>{link}</code>")
 
 @router.callback_query(F.data.startswith("editcap_"))
 async def edit_cap_start(callback: CallbackQuery, state: FSMContext):
@@ -996,7 +1260,7 @@ async def edit_cap_start(callback: CallbackQuery, state: FSMContext):
     fid = callback.data.replace("editcap_", "")
     await state.update_data(edit_fid=fid)
     await state.set_state(EditState.waiting_caption)
-    await callback.message.edit_text("✏️ کپشن جدید:", reply_markup=back_inline(f"file_{fid}"))
+    await callback.message.edit_text("✏️ کپشن:", reply_markup=back_inline(f"file_{fid}"))
 
 @router.message(EditState.waiting_caption)
 async def edit_cap_save(message: Message, state: FSMContext):
@@ -1012,7 +1276,7 @@ async def set_pass_start(callback: CallbackQuery, state: FSMContext):
     fid = callback.data.replace("setpass_", "")
     await state.update_data(edit_fid=fid)
     await state.set_state(EditState.waiting_password)
-    await callback.message.edit_text("🔒 رمز جدید:", reply_markup=back_inline(f"file_{fid}"))
+    await callback.message.edit_text("🔒 رمز:", reply_markup=back_inline(f"file_{fid}"))
 
 @router.message(EditState.waiting_password)
 async def set_pass_save(message: Message, state: FSMContext):
@@ -1026,13 +1290,11 @@ async def set_pass_save(message: Message, state: FSMContext):
 @router.callback_query(F.data.startswith("del_"))
 async def del_confirm(callback: CallbackQuery):
     await callback.answer()
-    fid = callback.data.replace("del_", "")
-    await callback.message.edit_text("⚠️ حذف شود؟", reply_markup=confirm_delete_kb(fid))
+    await callback.message.edit_text("⚠️ حذف شود؟", reply_markup=confirm_delete_kb(callback.data.replace("del_", "")))
 
 @router.callback_query(F.data.startswith("delyes_"))
 async def del_exec(callback: CallbackQuery):
-    fid = callback.data.replace("delyes_", "")
-    if await db.delete_file(fid):
+    if await db.delete_file(callback.data.replace("delyes_", "")):
         await callback.answer("✅ حذف شد")
     await files_list_cb(callback)
 
@@ -1066,46 +1328,13 @@ async def toggle_ban(callback: CallbackQuery):
     await callback.answer(await db.toggle_ban(int(callback.data.replace("ban_", ""))))
     await user_info_cb(callback)
 
-@router.callback_query(F.data == "admins_list")
-async def admins_list_cb(callback: CallbackQuery):
-    await callback.answer()
-    admins = await db.get_admins()
-    txt = "👮 ادمین‌ها:\n" + "\n".join([f"• <code>{aid}</code> - {a['role']}" for aid, a in admins.items()])
-    await callback.message.edit_text(txt, reply_markup=admins_kb(admins))
-
-@router.callback_query(F.data == "add_admin")
-async def add_admin_start(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await state.set_state(SettingsState.waiting_admin_id)
-    await callback.message.edit_text("➕ آیدی:", reply_markup=back_inline("admins_list"))
-
-@router.message(SettingsState.waiting_admin_id)
-async def add_admin_save(message: Message, state: FSMContext):
-    try:
-        await db.add_admin(int(message.text))
-        await message.answer("✅ اضافه شد.", reply_markup=await get_admin_panel_kb())
-        await state.clear()
-    except:
-        await message.answer("❌ آیدی معتبر نیست.")
-
-@router.callback_query(F.data.startswith("admin_"))
-async def remove_admin_cb(callback: CallbackQuery):
-    await callback.answer()
-    aid = callback.data.replace("admin_", "")
-    if aid == str(ADMIN_ID):
-        await callback.answer("❌ مالک حذف نمی‌شود.", show_alert=True)
-        return
-    if await db.remove_admin(int(aid)):
-        await callback.answer("✅ حذف شد")
-    await admins_list_cb(callback)
-
 # ==================== SETTINGS ====================
 @router.callback_query(F.data == "settings")
 async def settings_cb(callback: CallbackQuery):
     await callback.answer()
     await callback.message.edit_text("⚙️ تنظیمات", reply_markup=settings_kb(await db.get_settings()))
 
-# ==================== TEXTS EDITOR ====================
+# ==================== TEXTS EDITOR (compact) ====================
 @router.callback_query(F.data == "edit_texts")
 async def texts_menu(callback: CallbackQuery):
     await callback.answer()
@@ -1115,7 +1344,7 @@ async def texts_menu(callback: CallbackQuery):
 async def edit_welcome(callback: CallbackQuery):
     await callback.answer()
     texts = await db.get_texts()
-    await callback.message.edit_text(f"👋 نوع: {texts.get('welcome_type','text')}\nمتن: {texts.get('welcome_text','')[:100]}", reply_markup=welcome_type_kb())
+    await callback.message.edit_text(f"👋 نوع: {texts.get('welcome_type','text')}", reply_markup=welcome_type_kb())
 
 @router.callback_query(F.data.startswith("wel_type_"))
 async def set_wel_type(callback: CallbackQuery, state: FSMContext):
@@ -1150,11 +1379,9 @@ async def recv_wel_media(message: Message, state: FSMContext):
         file_id = message.animation.file_id
     elif wtype == "sticker" and message.sticker:
         file_id = message.sticker.file_id
-    
     if not file_id:
         await message.answer("❌ نامعتبر.")
         return
-    
     await state.update_data(welcome_media_id=file_id)
     await state.set_state(SettingsState.waiting_welcome_caption)
     await message.answer("✅ دریافت شد! کپشن:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -1197,7 +1424,7 @@ async def save_text(message: Message, state: FSMContext):
         await message.answer("✅ ذخیره شد.", reply_markup=await get_admin_panel_kb())
     await state.clear()
 
-# ==================== TIMER ====================
+# ==================== TIMER & LOG CHANNEL & FORCE JOIN (compact) ====================
 @router.callback_query(F.data == "set_timer")
 async def timer_menu(callback: CallbackQuery):
     await callback.answer()
@@ -1237,7 +1464,6 @@ async def timer_save(message: Message, state: FSMContext):
     except:
         await message.answer("❌ عدد معتبر نیست.")
 
-# ==================== LOG CHANNEL ====================
 @router.callback_query(F.data == "set_logchan")
 async def set_logchan(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
@@ -1254,7 +1480,6 @@ async def save_logchan(message: Message, state: FSMContext):
     except:
         await message.answer("❌ خطا!")
 
-# ==================== FORCE JOIN ====================
 @router.callback_query(F.data == "set_forcejoin")
 async def fj_menu(callback: CallbackQuery):
     await callback.answer()
@@ -1310,8 +1535,10 @@ async def broadcast_send(message: Message, state: FSMContext):
 async def on_startup(bot: Bot):
     db.init_files()
     d = await db._read(ADMINS_FILE)
-    if str(ADMIN_ID) not in d["admins"]:
-        d["admins"][str(ADMIN_ID)] = {"role": "owner"}
+    if str(ADMIN_ID) not in d.get("admins", {}):
+        if "admins" not in d:
+            d["admins"] = {}
+        d["admins"][str(ADMIN_ID)] = {"role": "owner", "username": ""}
         await db._write(ADMINS_FILE, d)
     await bot.set_my_commands([
         BotCommand(command="start", description="🚀 شروع"),
