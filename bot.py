@@ -1,7 +1,7 @@
 """
-Telegram File Uploader Bot - v8.0 Professional
+Telegram File Uploader Bot - v9.0 Professional
 Aiogram 3.x | JSON Storage | Railway Ready
-Custom Texts Editor | Media Welcome | Unlimited Timer | Full Control
+ON/OFF Toggle | Maintenance Mode | Smart Retry | Full Control
 """
 
 import asyncio
@@ -78,10 +78,10 @@ def format_time(minutes: int) -> str:
 def get_default_texts():
     """Get default texts for all bot messages"""
     return {
-        "welcome_type": "text",  # text, photo, video, animation, sticker
+        "welcome_type": "text",
         "welcome_text": "👋 سلام! به ربات آپلود فایل خوش اومدی.",
-        "welcome_media": "",  # file_id of media
-        "welcome_caption": "",  # caption for media
+        "welcome_media": "",
+        "welcome_caption": "",
         
         "help_text": "📎 راهنمای ربات:\n\nبرای دریافت فایل، لینک را باز کنید.\nبرای آپلود، از پنل مدیریت استفاده کنید.",
         
@@ -96,6 +96,9 @@ def get_default_texts():
         "banned_text": "🚫 شما مسدود شده‌اید.",
         "file_not_found": "❌ فایل پیدا نشد یا حذف شده است.",
         "file_deleted": "✅ فایل با موفقیت حذف شد.",
+        
+        "maintenance_text": "🔧 ربات در حال بروزرسانی ست\n\nلطفاً بعداً مراجعه کنید.",
+        "maintenance_retry": "🔄 تلاش دوباره",
     }
 
 # ==================== JSON MANAGER ====================
@@ -114,6 +117,7 @@ class JSONManager:
                 "delete_timer": 300,
                 "force_join": [],
                 "log_channel": "",
+                "bot_active": True,  # NEW: Bot ON/OFF toggle
                 "texts": get_default_texts()
             },
             LOGS_FILE: {"logs": []}
@@ -132,6 +136,17 @@ class JSONManager:
         async with self.locks[fn]:
             async with aiofiles.open(fn, 'w', encoding='utf-8') as f:
                 await f.write(json.dumps(data, indent=2, ensure_ascii=False))
+
+    async def is_bot_active(self) -> bool:
+        s = await self.get_settings()
+        return s.get("bot_active", True)
+
+    async def toggle_bot(self) -> bool:
+        s = await self.get_settings()
+        current = s.get("bot_active", True)
+        s["bot_active"] = not current
+        await self.update_setting("bot_active", s["bot_active"])
+        return s["bot_active"]
 
     async def add_user(self, uid: int, data: Dict):
         d = await self._read(USERS_FILE)
@@ -335,6 +350,12 @@ def skip_pass_inline(back_cb: str = "panel"):
         [InlineKeyboardButton(text="🔙 بازگشت", callback_data=back_cb)]
     ])
 
+def maintenance_kb(file_id: str = ""):
+    """Keyboard for maintenance mode - retry button"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 تلاش دوباره", callback_data=f"retry_{file_id}")]
+    ])
+
 def files_kb(files: Dict, page: int = 0):
     b = InlineKeyboardBuilder()
     items = list(files.items())
@@ -419,7 +440,7 @@ def admins_kb(admins: Dict):
     return b.as_markup()
 
 def settings_kb(settings: Dict):
-    """Settings menu - without welcome button, with texts editor"""
+    """Settings menu with Bot ON/OFF toggle"""
     timer_val = settings.get("delete_timer", 300)
     if timer_val == 0:
         timer_text = "⏱ تایمر حذف پست: خاموش"
@@ -429,7 +450,17 @@ def settings_kb(settings: Dict):
     fj = settings.get("force_join", [])
     fj_count = len(fj)
     
+    # Bot status button
+    bot_active = settings.get("bot_active", True)
+    if bot_active:
+        bot_btn_text = "🟢 ربات فعال است"
+        bot_btn_callback = "toggle_bot"
+    else:
+        bot_btn_text = "🔴 ربات خاموش است"
+        bot_btn_callback = "toggle_bot"
+    
     b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text=bot_btn_text, callback_data=bot_btn_callback))
     b.row(InlineKeyboardButton(text=f"🔗 عضویت اجباری ({fj_count})", callback_data="set_forcejoin"))
     b.row(InlineKeyboardButton(text="📝 ویرایش متن‌های ربات", callback_data="edit_texts"))
     b.row(InlineKeyboardButton(text="📢 کانال گزارش", callback_data="set_logchan"))
@@ -437,34 +468,8 @@ def settings_kb(settings: Dict):
     b.row(InlineKeyboardButton(text="🔙 بازگشت به منو", callback_data="panel"))
     return b.as_markup()
 
-def texts_editor_kb():
-    """Text editor menu - list of all editable texts"""
-    b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="👋 پیام خوشامد (قابل تنظیم با مدیا)", callback_data="edit_welcome"))
-    b.row(InlineKeyboardButton(text="📎 متن راهنما", callback_data="edit_help"))
-    b.row(InlineKeyboardButton(text="📢 متن عضویت اجباری", callback_data="edit_forcejoin"))
-    b.row(InlineKeyboardButton(text="✅ متن تایید عضویت", callback_data="edit_forcejoin_ok"))
-    b.row(InlineKeyboardButton(text="⚠️ متن عدم عضویت", callback_data="edit_forcejoin_fail"))
-    b.row(InlineKeyboardButton(text="🔒 متن درخواست رمز", callback_data="edit_password"))
-    b.row(InlineKeyboardButton(text="🚫 متن کاربر مسدود", callback_data="edit_banned"))
-    b.row(InlineKeyboardButton(text="🔙 بازگشت به تنظیمات", callback_data="settings"))
-    return b.as_markup()
-
-def welcome_type_kb():
-    """Choose welcome message type"""
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📝 متن ساده", callback_data="wel_type_text")],
-        [InlineKeyboardButton(text="🖼 عکس", callback_data="wel_type_photo"),
-         InlineKeyboardButton(text="🎬 ویدیو", callback_data="wel_type_video")],
-        [InlineKeyboardButton(text="✨ گیف", callback_data="wel_type_animation"),
-         InlineKeyboardButton(text="🏷 استیکر", callback_data="wel_type_sticker")],
-        [InlineKeyboardButton(text="🔙 بازگشت", callback_data="edit_texts")]
-    ])
-
 def timer_settings_kb(settings: Dict):
-    """Timer management"""
     timer_val = settings.get("delete_timer", 300)
-    
     b = InlineKeyboardBuilder()
     
     if timer_val == 0:
@@ -476,12 +481,34 @@ def timer_settings_kb(settings: Dict):
     
     b.row(InlineKeyboardButton(text="⏰ تنظیم زمان جدید", callback_data="timer_set"))
     b.row(InlineKeyboardButton(text="🔙 بازگشت به تنظیمات", callback_data="settings"))
-    
     return b.as_markup()
 
 def back_to_timer_kb():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🔙 بازگشت به تنظیمات تایمر", callback_data="set_timer")]
+    ])
+
+def texts_editor_kb():
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="👋 پیام خوشامد (قابل تنظیم با مدیا)", callback_data="edit_welcome"))
+    b.row(InlineKeyboardButton(text="📎 متن راهنما", callback_data="edit_help"))
+    b.row(InlineKeyboardButton(text="📢 متن عضویت اجباری", callback_data="edit_forcejoin"))
+    b.row(InlineKeyboardButton(text="✅ متن تایید عضویت", callback_data="edit_forcejoin_ok"))
+    b.row(InlineKeyboardButton(text="⚠️ متن عدم عضویت", callback_data="edit_forcejoin_fail"))
+    b.row(InlineKeyboardButton(text="🔒 متن درخواست رمز", callback_data="edit_password"))
+    b.row(InlineKeyboardButton(text="🚫 متن کاربر مسدود", callback_data="edit_banned"))
+    b.row(InlineKeyboardButton(text="🔧 متن بروزرسانی (Maintenance)", callback_data="edit_maintenance"))
+    b.row(InlineKeyboardButton(text="🔙 بازگشت به تنظیمات", callback_data="settings"))
+    return b.as_markup()
+
+def welcome_type_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📝 متن ساده", callback_data="wel_type_text")],
+        [InlineKeyboardButton(text="🖼 عکس", callback_data="wel_type_photo"),
+         InlineKeyboardButton(text="🎬 ویدیو", callback_data="wel_type_video")],
+        [InlineKeyboardButton(text="✨ گیف", callback_data="wel_type_animation"),
+         InlineKeyboardButton(text="🏷 استیکر", callback_data="wel_type_sticker")],
+        [InlineKeyboardButton(text="🔙 بازگشت", callback_data="edit_texts")]
     ])
 
 def back_to_texts_kb():
@@ -491,30 +518,19 @@ def back_to_texts_kb():
 
 def force_join_admin_kb(channels: List[str]):
     b = InlineKeyboardBuilder()
-    
     if channels:
         for i, ch in enumerate(channels, 1):
-            b.row(InlineKeyboardButton(
-                text=f"❌ حذف چنل {i}: {ch}",
-                callback_data=f"fj_del_{ch}"
-            ))
-    
+            b.row(InlineKeyboardButton(text=f"❌ حذف چنل {i}: {ch}", callback_data=f"fj_del_{ch}"))
     b.row(InlineKeyboardButton(text="➕ افزودن چنل/گروه جدید", callback_data="fj_add"))
     b.row(InlineKeyboardButton(text="🔙 بازگشت به تنظیمات", callback_data="settings"))
     return b.as_markup()
 
 def force_join_user_kb(channels: List[str], not_joined: List[tuple]):
     b = InlineKeyboardBuilder()
-    
     for idx, ch in not_joined:
         display = ch.lstrip("@")
-        if ch.startswith("@"):
-            url = f"https://t.me/{display}"
-        else:
-            url = f"https://t.me/c/{ch.replace('-100','')}"
-        
+        url = f"https://t.me/{display}" if ch.startswith("@") else f"https://t.me/c/{ch.replace('-100','')}"
         b.row(InlineKeyboardButton(text=f"📢 چنل {idx}", url=url))
-    
     b.row(InlineKeyboardButton(text="✅ بررسی عضویت", callback_data="fj_check"))
     return b.as_markup()
 
@@ -542,7 +558,7 @@ class SettingsState(StatesGroup):
     waiting_admin_id = State()
     waiting_logchan = State()
     waiting_forcejoin = State()
-    waiting_text = State()  # Generic text editing
+    waiting_text = State()
 
 class BroadcastState(StatesGroup):
     waiting = State()
@@ -567,6 +583,16 @@ async def start_cmd(message: Message, state: FSMContext):
     args = message.text.split()
     if len(args) > 1:
         file_id = args[1]
+        
+        # Check if bot is active
+        if not await db.is_bot_active():
+            texts = await db.get_texts()
+            await message.answer(
+                texts.get("maintenance_text", "🔧 ربات در حال بروزرسانی ست"),
+                reply_markup=maintenance_kb(file_id)
+            )
+            return
+        
         file_data = await db.get_file(file_id)
         if file_data:
             settings = await db.get_settings()
@@ -574,12 +600,13 @@ async def start_cmd(message: Message, state: FSMContext):
             
             if force_channels:
                 not_joined = await check_user_joined(message.bot, user.id, force_channels)
-                
                 if not_joined:
                     await state.update_data(pending_file=file_id)
                     texts = await db.get_texts()
-                    txt = texts.get("force_join_text", "📢 **لطفاً ابتدا در چنل‌های زیر عضو شوید**")
-                    await message.answer(txt, reply_markup=force_join_user_kb(force_channels, not_joined))
+                    await message.answer(
+                        texts.get("force_join_text", "📢 لطفاً عضو شوید"),
+                        reply_markup=force_join_user_kb(force_channels, not_joined)
+                    )
                     return
             
             if file_data.get("password"):
@@ -587,7 +614,7 @@ async def start_cmd(message: Message, state: FSMContext):
                 await state.set_state(PasswordState.waiting)
                 texts = await db.get_texts()
                 await message.answer(
-                    texts.get("password_text", "🔒 این فایل دارای رمز عبور است."),
+                    texts.get("password_text", "🔒 رمز را وارد کنید:"),
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                         [InlineKeyboardButton(text="🔙 انصراف", callback_data="cancel_download")]
                     ])
@@ -602,11 +629,36 @@ async def start_cmd(message: Message, state: FSMContext):
             await message.answer(texts.get("file_not_found", "❌ فایل پیدا نشد."))
             return
     
-    # Send welcome with media support
     await send_welcome_message(message, user)
 
+# ==================== RETRY AFTER MAINTENANCE ====================
+@router.callback_query(F.data.startswith("retry_"))
+async def retry_download(callback: CallbackQuery, state: FSMContext):
+    """Retry download after maintenance mode"""
+    await callback.answer()
+    
+    file_id = callback.data.replace("retry_", "")
+    
+    # Check if bot is now active
+    if not await db.is_bot_active():
+        texts = await db.get_texts()
+        await callback.message.edit_text(
+            texts.get("maintenance_text", "🔧 ربات در حال بروزرسانی ست"),
+            reply_markup=maintenance_kb(file_id)
+        )
+        await callback.answer("🔧 ربات هنوز در حال بروزرسانی است", show_alert=True)
+        return
+    
+    # Bot is active now - send the file
+    file_data = await db.get_file(file_id)
+    if file_data:
+        await callback.message.edit_text("✅ ربات فعال است! در حال ارسال فایل...")
+        await send_file_to_user(callback.message, file_data)
+        await notify_admins_download(callback.bot, file_data, callback.from_user)
+    else:
+        await callback.message.edit_text("❌ فایل پیدا نشد.")
+
 async def send_welcome_message(message: Message, user):
-    """Send welcome message based on settings (text or media)"""
     texts = await db.get_texts()
     welcome_type = texts.get("welcome_type", "text")
     welcome_text = texts.get("welcome_text", "👋 سلام!")
@@ -620,23 +672,11 @@ async def send_welcome_message(message: Message, user):
     
     try:
         if welcome_type == "photo" and welcome_media:
-            await message.answer_photo(
-                photo=welcome_media,
-                caption=welcome_caption or welcome_text,
-                reply_markup=kb
-            )
+            await message.answer_photo(photo=welcome_media, caption=welcome_caption or welcome_text, reply_markup=kb)
         elif welcome_type == "video" and welcome_media:
-            await message.answer_video(
-                video=welcome_media,
-                caption=welcome_caption or welcome_text,
-                reply_markup=kb
-            )
+            await message.answer_video(video=welcome_media, caption=welcome_caption or welcome_text, reply_markup=kb)
         elif welcome_type == "animation" and welcome_media:
-            await message.answer_animation(
-                animation=welcome_media,
-                caption=welcome_caption or welcome_text,
-                reply_markup=kb
-            )
+            await message.answer_animation(animation=welcome_media, caption=welcome_caption or welcome_text, reply_markup=kb)
         elif welcome_type == "sticker" and welcome_media:
             await message.answer_sticker(sticker=welcome_media)
             await message.answer(welcome_caption or welcome_text, reply_markup=kb)
@@ -672,7 +712,7 @@ async def force_join_check(callback: CallbackQuery, state: FSMContext):
     not_joined = await check_user_joined(callback.bot, user_id, force_channels)
     
     if not_joined:
-        txt = texts.get("force_join_fail", "⚠️ **هنوز عضو نشدید!**")
+        txt = texts.get("force_join_fail", "⚠️ هنوز عضو نشدید!")
         try:
             await callback.message.edit_text(txt, reply_markup=force_join_user_kb(force_channels, not_joined))
             await callback.answer("❌ هنوز همه چنل‌ها رو عضو نشدید!", show_alert=True)
@@ -685,15 +725,13 @@ async def force_join_check(callback: CallbackQuery, state: FSMContext):
         if file_id:
             file_data = await db.get_file(file_id)
             if file_data:
-                await callback.message.edit_text(texts.get("force_join_success", "✅ عضویت تایید شد!"))
+                await callback.message.edit_text(texts.get("force_join_success", "✅ تایید شد!"))
                 await send_file_to_user(callback.message, file_data)
                 await notify_admins_download(callback.bot, file_data, callback.from_user)
                 await state.clear()
-            else:
-                await callback.answer("❌ فایل پیدا نشد.", show_alert=True)
         else:
             await callback.message.edit_text(
-                texts.get("force_join_success", "✅ عضویت شما تایید شد!"),
+                texts.get("force_join_success", "✅ تایید شد!"),
                 reply_markup=user_main_menu()
             )
             await state.clear()
@@ -719,11 +757,11 @@ async def check_password(message: Message, state: FSMContext):
     
     if message.text == file_data.get("password", ""):
         await state.clear()
-        await message.answer(texts.get("password_correct", "✅ رمز صحیح است."))
+        await message.answer(texts.get("password_correct", "✅ رمز صحیح"))
         await send_file_to_user(message, file_data)
         await notify_admins_download(message.bot, file_data, message.from_user)
     else:
-        await message.answer(texts.get("password_wrong", "❌ رمز اشتباه است."))
+        await message.answer(texts.get("password_wrong", "❌ رمز اشتباه"))
 
 # ==================== DOWNLOAD NOTIFICATION ====================
 async def notify_admins_download(bot: Bot, file_data: Dict, user):
@@ -810,10 +848,7 @@ async def menu_upload(message: Message, state: FSMContext):
         return
     await state.set_state(UploadState.waiting)
     await message.answer(
-        "📤 **آپلود فایل جدید**\n\n"
-        "لطفا فایل خود را ارسال کنید.\n"
-        "🖼 عکس | 🎬 ویدیو | 🎵 صوت | 🎤 ویس\n"
-        "✨ گیف | 🏷 استیکر | 📄 فایل",
+        "📤 **آپلود فایل جدید**\n\nلطفا فایل خود را ارسال کنید.",
         reply_markup=back_inline()
     )
 
@@ -842,7 +877,7 @@ async def menu_broadcast(message: Message, state: FSMContext):
     if not await db.is_admin(message.from_user.id):
         return
     await state.set_state(BroadcastState.waiting)
-    await message.answer("📢 پیام خود را برای ارسال همگانی بفرستید:", reply_markup=back_inline())
+    await message.answer("📢 پیام خود را بفرستید:", reply_markup=back_inline())
 
 @router.message(F.text == "⚙️ تنظیمات")
 async def menu_settings(message: Message):
@@ -948,20 +983,20 @@ async def upload_receive(message: Message, state: FSMContext):
     
     await state.update_data(file_id=file_id, file_type=file_type, file_name=file_name)
     await state.set_state(UploadState.caption)
-    await message.answer("✅ فایل دریافت شد! حالا کپشن را بفرستید:", reply_markup=skip_back_inline())
+    await message.answer("✅ فایل دریافت شد! کپشن:", reply_markup=skip_back_inline())
 
 @router.callback_query(F.data == "skip_caption")
 async def skip_caption(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.update_data(caption="")
     await state.set_state(UploadState.password)
-    await callback.message.edit_text("🔒 رمز عبور می‌خواهید؟", reply_markup=skip_pass_inline())
+    await callback.message.edit_text("🔒 رمز عبور؟", reply_markup=skip_pass_inline())
 
 @router.message(UploadState.caption)
 async def upload_caption(message: Message, state: FSMContext):
     await state.update_data(caption=message.text or "")
     await state.set_state(UploadState.password)
-    await message.answer("🔒 رمز عبور می‌خواهید؟", reply_markup=skip_pass_inline())
+    await message.answer("🔒 رمز عبور؟", reply_markup=skip_pass_inline())
 
 @router.callback_query(F.data == "skip_password")
 async def skip_password(callback: CallbackQuery, state: FSMContext):
@@ -993,16 +1028,13 @@ async def finalize_upload(message: Message, state: FSMContext, admin_id: int):
     lock = "🔒 دارد" if data.get("password") else "🔓 ندارد"
     
     txt = (
-        f"✅ **آپلود موفق!**\n\n"
-        f"{icon} فایل آپلود شد\n"
+        f"✅ **آپلود موفق!**\n\n{icon} فایل آپلود شد\n"
         f"🆔: <code>{safe_html(fid)}</code>\n"
-        f"📝: {safe_html(data.get('caption') or 'بدون کپشن')}\n"
-        f"{lock}\n"
+        f"📝: {safe_html(data.get('caption') or 'بدون کپشن')}\n{lock}\n"
     )
     if data.get("password"):
         txt += f"🔑 رمز: <code>{safe_html(data.get('password'))}</code>\n\n"
-    
-    txt += f"🔗 **لینک دانلود:**\n<a href='{safe_html(link)}'>📎 کلیک کنید</a>\n<code>{safe_html(link)}</code>"
+    txt += f"🔗 **لینک:**\n<a href='{safe_html(link)}'>📎 کلیک کنید</a>\n<code>{safe_html(link)}</code>"
     
     await message.answer(txt, reply_markup=admin_main_menu())
     await state.clear()
@@ -1016,6 +1048,25 @@ async def panel_callback(callback: CallbackQuery):
 @router.callback_query(F.data == "noop")
 async def noop(callback: CallbackQuery):
     await callback.answer()
+
+# ==================== BOT ON/OFF TOGGLE ====================
+@router.callback_query(F.data == "toggle_bot")
+async def toggle_bot_status(callback: CallbackQuery):
+    """Toggle bot active/inactive"""
+    await callback.answer()
+    
+    new_status = await db.toggle_bot()
+    await db.add_log("toggle", callback.from_user.id, f"Bot {'ON' if new_status else 'OFF'}")
+    
+    s = await db.get_settings()
+    
+    # Just refresh the settings keyboard - button text changes automatically
+    await callback.message.edit_text("⚙️ **تنظیمات**", reply_markup=settings_kb(s))
+    
+    if new_status:
+        await callback.answer("🟢 ربات فعال شد", show_alert=True)
+    else:
+        await callback.answer("🔴 ربات خاموش شد", show_alert=True)
 
 @router.callback_query(F.data == "files_list")
 async def files_list_cb(callback: CallbackQuery):
@@ -1042,13 +1093,7 @@ async def file_info(callback: CallbackQuery):
         await callback.answer("❌ پیدا نشد", show_alert=True)
         return
     lock = "🔒 دارد" if f.get("password") else "🔓 ندارد"
-    txt = (
-        f"📁 **اطلاعات فایل**\n\n"
-        f"🆔: <code>{safe_html(fid)}</code>\n"
-        f"📝: {safe_html(f.get('caption',''))}\n"
-        f"📥: {f['downloads']}\n{lock}\n"
-        f"📅: {f['date'][:10]}"
-    )
+    txt = f"📁 **اطلاعات فایل**\n\n🆔: <code>{safe_html(fid)}</code>\n📝: {safe_html(f.get('caption',''))}\n📥: {f['downloads']}\n{lock}\n📅: {f['date'][:10]}"
     await callback.message.edit_text(txt, reply_markup=file_actions_kb(fid))
 
 @router.callback_query(F.data.startswith("dl_"))
@@ -1079,7 +1124,7 @@ async def edit_cap_start(callback: CallbackQuery, state: FSMContext):
     fid = callback.data.replace("editcap_", "")
     await state.update_data(edit_fid=fid)
     await state.set_state(EditState.waiting_caption)
-    await callback.message.edit_text("✏️ کپشن جدید را بفرستید:", reply_markup=back_inline(f"file_{fid}"))
+    await callback.message.edit_text("✏️ کپشن جدید:", reply_markup=back_inline(f"file_{fid}"))
 
 @router.message(EditState.waiting_caption)
 async def edit_cap_save(message: Message, state: FSMContext):
@@ -1118,8 +1163,7 @@ async def del_confirm(callback: CallbackQuery):
 async def del_exec(callback: CallbackQuery):
     fid = callback.data.replace("delyes_", "")
     if await db.delete_file(fid):
-        texts = await db.get_texts()
-        await callback.answer(texts.get("file_deleted", "✅ فایل حذف شد."))
+        await callback.answer("✅ حذف شد")
         await files_list_cb(callback)
     else:
         await callback.answer("❌ خطا", show_alert=True)
@@ -1172,7 +1216,7 @@ async def admins_list_cb(callback: CallbackQuery):
 async def add_admin_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(SettingsState.waiting_admin_id)
-    await callback.message.edit_text("➕ آیدی عددی ادمین جدید:", reply_markup=back_inline("admins_list"))
+    await callback.message.edit_text("➕ آیدی عددی:", reply_markup=back_inline("admins_list"))
 
 @router.message(SettingsState.waiting_admin_id)
 async def add_admin_save(message: Message, state: FSMContext):
@@ -1182,7 +1226,7 @@ async def add_admin_save(message: Message, state: FSMContext):
         await message.answer(f"✅ ادمین <code>{uid}</code> اضافه شد.", reply_markup=admin_main_menu())
         await state.clear()
     except:
-        await message.answer("❌ آیدی معتبر نیست. دوباره تلاش کنید:")
+        await message.answer("❌ آیدی معتبر نیست.")
         return
 
 @router.callback_query(F.data.startswith("admin_"))
@@ -1203,31 +1247,20 @@ async def settings_cb(callback: CallbackQuery):
     s = await db.get_settings()
     await callback.message.edit_text("⚙️ تنظیمات", reply_markup=settings_kb(s))
 
-# ==================== TEXTS EDITOR ====================
+# ==================== TEXTS EDITOR (same as v8.0) ====================
 @router.callback_query(F.data == "edit_texts")
 async def texts_editor_menu(callback: CallbackQuery):
     await callback.answer()
-    await callback.message.edit_text(
-        "📝 **ویرایش متن‌های ربات**\n\n"
-        "در این بخش می‌توانید تمام متن‌های ربات را شخصی‌سازی کنید.\n"
-        "هر متن را جداگانه ویرایش کنید.",
-        reply_markup=texts_editor_kb()
-    )
+    await callback.message.edit_text("📝 **ویرایش متن‌های ربات**", reply_markup=texts_editor_kb())
 
-# --- Welcome Message Editor ---
 @router.callback_query(F.data == "edit_welcome")
 async def edit_welcome_menu(callback: CallbackQuery):
     await callback.answer()
     texts = await db.get_texts()
     w_type = texts.get("welcome_type", "text")
-    
     type_names = {"text": "📝 متن", "photo": "🖼 عکس", "video": "🎬 ویدیو", "animation": "✨ گیف", "sticker": "🏷 استیکر"}
-    
     await callback.message.edit_text(
-        f"👋 **ویرایش پیام خوشامد**\n\n"
-        f"📌 نوع فعلی: {type_names.get(w_type, 'متن')}\n"
-        f"📝 متن: {texts.get('welcome_text', '')[:100]}...\n\n"
-        f"می‌توانید نوع پیام خوشامد را تغییر دهید.",
+        f"👋 **ویرایش پیام خوشامد**\n\n📌 نوع: {type_names.get(w_type)}\n📝 متن: {texts.get('welcome_text','')[:100]}...",
         reply_markup=welcome_type_kb()
     )
 
@@ -1236,22 +1269,14 @@ async def set_welcome_type(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     wtype = callback.data.replace("wel_type_", "")
     await db.update_text("welcome_type", wtype)
-    
     if wtype == "text":
         await state.set_state(SettingsState.waiting_welcome)
-        await callback.message.edit_text(
-            "📝 لطفاً متن پیام خوشامد جدید را ارسال کنید:",
-            reply_markup=back_inline("edit_texts")
-        )
+        await callback.message.edit_text("📝 متن خوشامد جدید:", reply_markup=back_inline("edit_texts"))
     else:
         await state.set_state(SettingsState.waiting_welcome_media)
         await state.update_data(welcome_media_type=wtype)
-        
         type_names = {"photo": "عکس", "video": "ویدیو", "animation": "گیف", "sticker": "استیکر"}
-        await callback.message.edit_text(
-            f"📤 لطفاً {type_names.get(wtype, 'فایل')} خود را ارسال کنید:",
-            reply_markup=back_inline("edit_texts")
-        )
+        await callback.message.edit_text(f"📤 {type_names.get(wtype)} را ارسال کنید:", reply_markup=back_inline("edit_texts"))
 
 @router.message(SettingsState.waiting_welcome)
 async def save_welcome_text(message: Message, state: FSMContext):
@@ -1259,14 +1284,13 @@ async def save_welcome_text(message: Message, state: FSMContext):
     await db.update_text("welcome_media", "")
     await db.update_text("welcome_caption", "")
     await db.add_log("texts", message.from_user.id, "Updated welcome text")
-    await message.answer("✅ پیام خوشامد با موفقیت ذخیره شد.", reply_markup=admin_main_menu())
+    await message.answer("✅ ذخیره شد.", reply_markup=admin_main_menu())
     await state.clear()
 
 @router.message(SettingsState.waiting_welcome_media)
 async def receive_welcome_media(message: Message, state: FSMContext):
     data = await state.get_data()
     wtype = data.get("welcome_media_type", "photo")
-    
     file_id = None
     if wtype == "photo" and message.photo:
         file_id = message.photo[-1].file_id
@@ -1276,20 +1300,14 @@ async def receive_welcome_media(message: Message, state: FSMContext):
         file_id = message.animation.file_id
     elif wtype == "sticker" and message.sticker:
         file_id = message.sticker.file_id
-    
     if not file_id:
-        await message.answer("❌ فایل معتبر نیست. لطفاً دوباره ارسال کنید.")
+        await message.answer("❌ فایل معتبر نیست.")
         return
-    
     await state.update_data(welcome_media_id=file_id)
     await state.set_state(SettingsState.waiting_welcome_caption)
-    await message.answer(
-        "✅ فایل دریافت شد! حالا کپشن را وارد کنید (اختیاری):\n"
-        "/skip برای رد کردن",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="⏭ بدون کپشن", callback_data="skip_wel_cap")]
-        ])
-    )
+    await message.answer("✅ فایل دریافت شد! کپشن (اختیاری):", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏭ بدون کپشن", callback_data="skip_wel_cap")]
+    ]))
 
 @router.callback_query(F.data == "skip_wel_cap")
 async def skip_wel_caption(callback: CallbackQuery, state: FSMContext):
@@ -1297,57 +1315,41 @@ async def skip_wel_caption(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     await db.update_text("welcome_media", data.get("welcome_media_id", ""))
     await db.update_text("welcome_caption", "")
-    await db.add_log("texts", callback.from_user.id, "Updated welcome media (no caption)")
-    await callback.message.edit_text("✅ پیام خوشامد با موفقیت ذخیره شد.")
+    await callback.message.edit_text("✅ ذخیره شد.")
     await callback.message.answer("👑 پنل مدیریت:", reply_markup=admin_main_menu())
     await state.clear()
 
 @router.message(SettingsState.waiting_welcome_caption)
 async def save_welcome_caption(message: Message, state: FSMContext):
-    caption = message.text or ""
     data = await state.get_data()
     await db.update_text("welcome_media", data.get("welcome_media_id", ""))
-    await db.update_text("welcome_caption", caption)
-    await db.add_log("texts", message.from_user.id, "Updated welcome media with caption")
-    await message.answer("✅ پیام خوشامد با موفقیت ذخیره شد.", reply_markup=admin_main_menu())
+    await db.update_text("welcome_caption", message.text or "")
+    await message.answer("✅ ذخیره شد.", reply_markup=admin_main_menu())
     await state.clear()
 
-# --- Generic Text Editor ---
 @router.callback_query(F.data.startswith("edit_"))
 async def edit_text_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     key = callback.data.replace("edit_", "")
-    
-    # Map callback to text key
     key_map = {
-        "help": "help_text",
-        "forcejoin": "force_join_text",
-        "forcejoin_ok": "force_join_success",
-        "forcejoin_fail": "force_join_fail",
-        "password": "password_text",
-        "banned": "banned_text",
+        "help": "help_text", "forcejoin": "force_join_text",
+        "forcejoin_ok": "force_join_success", "forcejoin_fail": "force_join_fail",
+        "password": "password_text", "banned": "banned_text",
+        "maintenance": "maintenance_text",
     }
-    
     text_key = key_map.get(key, key)
     texts = await db.get_texts()
     current = texts.get(text_key, "")
-    
     await state.update_data(edit_text_key=text_key)
     await state.set_state(SettingsState.waiting_text)
-    
     title_map = {
-        "help": "📎 متن راهنما",
-        "forcejoin": "📢 متن عضویت اجباری",
-        "forcejoin_ok": "✅ متن تایید عضویت",
-        "forcejoin_fail": "⚠️ متن عدم عضویت",
-        "password": "🔒 متن درخواست رمز",
-        "banned": "🚫 متن کاربر مسدود",
+        "help": "📎 متن راهنما", "forcejoin": "📢 متن عضویت",
+        "forcejoin_ok": "✅ متن تایید", "forcejoin_fail": "⚠️ متن عدم عضویت",
+        "password": "🔒 متن رمز", "banned": "🚫 متن مسدود",
+        "maintenance": "🔧 متن بروزرسانی",
     }
-    
     await callback.message.edit_text(
-        f"{title_map.get(key, '📝')} **ویرایش متن**\n\n"
-        f"📌 متن فعلی:\n{current[:200]}\n\n"
-        f"✏️ متن جدید را ارسال کنید:",
+        f"{title_map.get(key, '📝')}\n\n📌 فعلی:\n{current[:200]}\n\n✏️ متن جدید:",
         reply_markup=back_to_texts_kb()
     )
 
@@ -1355,12 +1357,9 @@ async def edit_text_start(callback: CallbackQuery, state: FSMContext):
 async def save_text(message: Message, state: FSMContext):
     data = await state.get_data()
     text_key = data.get("edit_text_key", "")
-    
     if text_key:
         await db.update_text(text_key, message.text)
-        await db.add_log("texts", message.from_user.id, f"Updated {text_key}")
-        await message.answer(f"✅ متن با موفقیت ذخیره شد.", reply_markup=admin_main_menu())
-    
+        await message.answer("✅ ذخیره شد.", reply_markup=admin_main_menu())
     await state.clear()
 
 # ==================== TIMER MANAGEMENT ====================
@@ -1368,79 +1367,47 @@ async def save_text(message: Message, state: FSMContext):
 async def timer_menu(callback: CallbackQuery):
     await callback.answer()
     s = await db.get_settings()
-    timer_val = s.get("delete_timer", 300)
-    
-    if timer_val == 0:
-        status = "🔴 خاموش"
-    else:
-        status = f"🟢 {format_time(timer_val // 60)}"
-    
-    await callback.message.edit_text(
-        f"⏱ **تنظیمات تایمر حذف پست**\n\n"
-        f"📌 وضعیت فعلی: {status}\n\n"
-        f"پیام‌های فایل ارسالی ربات پس از مدت زمان تعیین شده حذف می‌شوند.\n"
-        f"پیام کاربران هرگز حذف نمی‌شود.",
-        reply_markup=timer_settings_kb(s)
-    )
+    await callback.message.edit_text("⏱ **تنظیمات تایمر**", reply_markup=timer_settings_kb(s))
 
 @router.callback_query(F.data == "timer_on")
 async def timer_on(callback: CallbackQuery):
     await callback.answer()
     await db.update_setting("delete_timer", 300)
-    await db.add_log("settings", callback.from_user.id, "Timer ON")
     s = await db.get_settings()
-    await callback.message.edit_text(
-        "✅ **تایمر با موفقیت روشن شد!**\n\n⏱ مدت زمان: ۵ دقیقه",
-        reply_markup=timer_settings_kb(s)
-    )
+    await callback.message.edit_text("✅ روشن شد (۵ دقیقه)", reply_markup=timer_settings_kb(s))
 
 @router.callback_query(F.data == "timer_off")
 async def timer_off(callback: CallbackQuery):
     await callback.answer()
     await db.update_setting("delete_timer", 0)
-    await db.add_log("settings", callback.from_user.id, "Timer OFF")
     s = await db.get_settings()
-    await callback.message.edit_text(
-        "✅ **تایمر با موفقیت خاموش شد!**",
-        reply_markup=timer_settings_kb(s)
-    )
+    await callback.message.edit_text("✅ خاموش شد", reply_markup=timer_settings_kb(s))
 
 @router.callback_query(F.data == "timer_set")
 async def timer_set_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(SettingsState.waiting_timer)
-    await callback.message.edit_text(
-        "⏰ **لطفاً زمان را برحسب دقیقه وارد نمایید:**\n\n"
-        "📌 ۰ = خاموش\n📌 هر عدد = دقیقه\n\n"
-        "مثال: ۱۰ | ۱۲۰ | ۱۴۴۰ | ۱۰۰۸۰",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_timer")]
-        ])
-    )
+    await callback.message.edit_text("⏰ زمان به دقیقه:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_timer")]
+    ]))
 
 @router.message(SettingsState.waiting_timer)
 async def timer_set_save(message: Message, state: FSMContext):
     try:
         mins = int(message.text)
-        
         if mins == 0:
             await db.update_setting("delete_timer", 0)
-            await message.answer("✅ **با موفقیت تنظیم شد!**\n\n⏱ تایمر: خاموش 🔴", reply_markup=back_to_timer_kb())
+            await message.answer("✅ خاموش شد 🔴", reply_markup=back_to_timer_kb())
         elif mins < 0:
-            await message.answer("❌ عدد نمی‌تواند منفی باشد.\n🔄 دوباره تلاش کنید:")
+            await message.answer("❌ عدد منفی!")
             return
         else:
             await db.update_setting("delete_timer", mins * 60)
-            time_display = format_time(mins)
-            await message.answer(
-                f"✅ **با موفقیت تنظیم شد!**\n\n⏱ مدت زمان: {time_display} 🟢",
-                reply_markup=back_to_timer_kb()
-            )
+            await message.answer(f"✅ {format_time(mins)} 🟢", reply_markup=back_to_timer_kb())
     except:
-        await message.answer("❌ لطفاً یک عدد معتبر وارد کنید.\n🔄 دوباره تلاش کنید:")
+        await message.answer("❌ عدد معتبر نیست!")
         return
-    
-    await db.add_log("settings", message.from_user.id, f"Timer set to {mins}min")
+    await db.add_log("settings", message.from_user.id, f"Timer: {mins}min")
     await state.clear()
 
 # ==================== LOG CHANNEL ====================
@@ -1448,10 +1415,7 @@ async def timer_set_save(message: Message, state: FSMContext):
 async def set_logchan(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(SettingsState.waiting_logchan)
-    await callback.message.edit_text(
-        "📢 آیدی کانال گزارش را بفرستید:\nمثال: @log_channel یا -100123456",
-        reply_markup=back_inline("settings")
-    )
+    await callback.message.edit_text("📢 آیدی کانال:", reply_markup=back_inline("settings"))
 
 @router.message(SettingsState.waiting_logchan)
 async def save_logchan(message: Message, state: FSMContext):
@@ -1459,83 +1423,52 @@ async def save_logchan(message: Message, state: FSMContext):
     try:
         await message.bot.get_chat(ch)
         await db.update_setting("log_channel", ch)
-        await message.answer("✅ کانال گزارش تنظیم شد.", reply_markup=admin_main_menu())
+        await message.answer("✅ تنظیم شد.", reply_markup=admin_main_menu())
         await state.clear()
-    except Exception as e:
-        await message.answer(f"❌ خطا. دوباره تلاش کنید:", reply_markup=back_inline("settings"))
+    except:
+        await message.answer("❌ خطا!")
         return
 
-# ==================== FORCE JOIN ADMIN ====================
+# ==================== FORCE JOIN ====================
 @router.callback_query(F.data == "set_forcejoin")
 async def forcejoin_menu(callback: CallbackQuery):
     await callback.answer()
     s = await db.get_settings()
     channels = s.get("force_join", [])
-    
     if channels:
-        txt = "🔗 **چنل‌های عضویت اجباری:**\n\n"
-        for i, ch in enumerate(channels, 1):
-            txt += f"{i}. {safe_html(ch)}\n"
-        txt += "\nبرای حذف یا افزودن از دکمه‌ها استفاده کنید."
+        txt = "🔗 **چنل‌ها:**\n\n" + "\n".join([f"{i}. {safe_html(ch)}" for i, ch in enumerate(channels, 1)])
     else:
-        txt = "🔗 **عضویت اجباری**\n\nهیچ چنلی تنظیم نشده.\nبرای افزودن کلیک کنید."
-    
+        txt = "🔗 هیچ چنلی تنظیم نشده."
     await callback.message.edit_text(txt, reply_markup=force_join_admin_kb(channels))
 
 @router.callback_query(F.data == "fj_add")
 async def fj_add_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(SettingsState.waiting_forcejoin)
-    await callback.message.edit_text(
-        "➕ **افزودن چنل/گروه جدید**\n\n"
-        "📌 فرمت: @channel_name یا -100123456789\n\n"
-        "⚠️ ربات باید ادمین باشد.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_forcejoin")]
-        ])
-    )
+    await callback.message.edit_text("➕ آیدی چنل:", reply_markup=back_inline("set_forcejoin"))
 
 @router.message(SettingsState.waiting_forcejoin)
 async def fj_add_save(message: Message, state: FSMContext):
     ch = message.text.strip()
-    
     if not (ch.startswith("@") or ch.startswith("-100")):
-        await message.answer("❌ فرمت اشتباه! دوباره تلاش کنید:", reply_markup=back_inline("set_forcejoin"))
+        await message.answer("❌ فرمت اشتباه!")
         return
-    
-    s = await db.get_settings()
-    if ch in s.get("force_join", []):
-        await message.answer("❌ قبلاً اضافه شده!", reply_markup=back_inline("set_forcejoin"))
-        return
-    
     try:
-        chat = await message.bot.get_chat(ch)
-        
-        try:
-            bot_member = await message.bot.get_chat_member(ch, message.bot.id)
-            if bot_member.status not in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
-                await message.answer("⚠️ ربات ادمین نیست!", reply_markup=back_inline("set_forcejoin"))
-                return
-        except:
-            pass
-        
+        await message.bot.get_chat(ch)
         if await db.add_force_join(ch):
-            await message.answer(
-                f"✅ **چنل اضافه شد!**\n\n📢 نام: {safe_html(chat.title or ch)}\n🆔: {safe_html(ch)}",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🔙 بازگشت به لیست چنل‌ها", callback_data="set_forcejoin")]
-                ])
-            )
+            await message.answer(f"✅ اضافه شد:\n{safe_html(ch)}", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 لیست چنل‌ها", callback_data="set_forcejoin")]
+            ]))
             await state.clear()
     except Exception as e:
-        await message.answer(f"❌ خطا: {safe_html(str(e)[:100])}\n\nدوباره تلاش کنید:", reply_markup=back_inline("set_forcejoin"))
+        await message.answer(f"❌ خطا: {safe_html(str(e)[:100])}")
         return
 
 @router.callback_query(F.data.startswith("fj_del_"))
 async def fj_delete(callback: CallbackQuery):
     ch = callback.data.replace("fj_del_", "")
     if await db.remove_force_join(ch):
-        await callback.answer("✅ حذف شد.")
+        await callback.answer("✅ حذف شد")
     await forcejoin_menu(callback)
 
 # ==================== BROADCAST ====================
@@ -1545,14 +1478,11 @@ async def broadcast_send(message: Message, state: FSMContext):
         await state.clear()
         await message.answer("❌ لغو شد.", reply_markup=admin_main_menu())
         return
-    
     users = await db.get_all_users()
     total = len(users)
     sent = 0
     failed = 0
-    
     prog = await message.answer(f"📢 0/{total}")
-    
     for i, uid in enumerate(users.keys()):
         try:
             await message.copy_to(int(uid))
@@ -1562,9 +1492,7 @@ async def broadcast_send(message: Message, state: FSMContext):
         if (i+1) % 20 == 0:
             await prog.edit_text(f"📢 {i+1}/{total}")
         await asyncio.sleep(0.05)
-    
     await prog.edit_text(f"✅ {sent}/{total}\n❌ {failed}", reply_markup=admin_main_menu())
-    await db.add_log("broadcast", message.from_user.id, f"Sent {sent}/{total}")
     await state.clear()
 
 # ==================== MAIN ====================
@@ -1574,13 +1502,13 @@ async def on_startup(bot: Bot):
     if str(ADMIN_ID) not in d["admins"]:
         d["admins"][str(ADMIN_ID)] = {"role": "owner", "added": datetime.now().isoformat()}
         await db._write(ADMINS_FILE, d)
-    
     s = await db.get_settings()
     if "force_join" not in s:
         await db.update_setting("force_join", [])
     if "texts" not in s:
         await db.update_setting("texts", get_default_texts())
-    
+    if "bot_active" not in s:
+        await db.update_setting("bot_active", True)
     await bot.set_my_commands([
         BotCommand(command="start", description="🚀 شروع"),
         BotCommand(command="admin", description="👑 پنل مدیریت")
