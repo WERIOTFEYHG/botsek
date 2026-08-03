@@ -1,7 +1,7 @@
 """
-Telegram File Uploader Bot - v6 Professional
+Telegram File Uploader Bot - v6.1 Professional
 Aiogram 3.x | JSON Storage | Railway Ready
-Password Protection | Force Join | Beautiful UI
+Fixed Force Join | Improved Settings | Smart Validation
 """
 
 import asyncio
@@ -65,7 +65,7 @@ class JSONManager:
             SETTINGS_FILE: {
                 "welcome": "👋 سلام! به ربات آپلود فایل خوش اومدی.",
                 "delete_timer": 300,
-                "force_join": [],  # list of channel/group IDs
+                "force_join": [],
                 "log_channel": ""
             },
             LOGS_FILE: {"logs": []}
@@ -235,7 +235,6 @@ db = JSONManager()
 # ==================== KEYBOARDS ====================
 
 def admin_main_menu():
-    """Main admin ReplyKeyboard"""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📤 آپلود فایل جدید")],
@@ -251,7 +250,6 @@ def admin_main_menu():
     )
 
 def user_main_menu():
-    """Main user ReplyKeyboard"""
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="📥 دانلود فایل")],
@@ -363,17 +361,22 @@ def admins_kb(admins: Dict):
     return b.as_markup()
 
 def settings_kb(settings: Dict):
-    """Settings menu"""
+    """Settings menu - Force Join is now FIRST"""
     timer = settings.get("delete_timer", 300) // 60
     log_ch = settings.get("log_channel", "تنظیم نشده")
     fj = settings.get("force_join", [])
     fj_count = len(fj)
     
     b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="👋 پیام خوشامد", callback_data="set_welcome"))
-    b.row(InlineKeyboardButton(text=f"⏱ تایمر حذف: {timer} دقیقه", callback_data="set_timer"))
-    b.row(InlineKeyboardButton(text=f"📢 کانال گزارش", callback_data="set_logchan"))
+    # 🔗 عضویت اجباری - FIRST BUTTON
     b.row(InlineKeyboardButton(text=f"🔗 عضویت اجباری ({fj_count})", callback_data="set_forcejoin"))
+    # 📢 کانال گزارش
+    b.row(InlineKeyboardButton(text=f"📢 کانال گزارش", callback_data="set_logchan"))
+    # 👋 پیام خوشامد
+    b.row(InlineKeyboardButton(text="👋 پیام خوشامد", callback_data="set_welcome"))
+    # ⏱ تایمر حذف
+    b.row(InlineKeyboardButton(text=f"⏱ تایمر حذف: {timer} دقیقه", callback_data="set_timer"))
+    # 🔙 بازگشت
     b.row(InlineKeyboardButton(text="🔙 بازگشت به منو", callback_data="panel"))
     return b.as_markup()
 
@@ -396,17 +399,21 @@ def force_join_user_kb(channels: List[str], not_joined: List[tuple]):
     """
     Force join keyboard for users
     Shows numbered buttons for channels they need to join
-    not_joined: list of (index, channel_id)
     """
     b = InlineKeyboardBuilder()
     
     for idx, ch in not_joined:
-        # Create invite link button
-        # Try to get username, otherwise use ID
         display = ch.lstrip("@")
+        # For public channels/groups
+        if ch.startswith("@"):
+            url = f"https://t.me/{display}"
+        # For private channels/groups
+        else:
+            url = f"https://t.me/c/{ch.replace('-100','')}"
+        
         b.row(InlineKeyboardButton(
             text=f"📢 چنل {idx}",
-            url=f"https://t.me/{display}" if not ch.startswith("-") else f"https://t.me/c/{ch.replace('-100','')}"
+            url=url
         ))
     
     b.row(InlineKeyboardButton(text="✅ بررسی عضویت", callback_data="fj_check"))
@@ -460,7 +467,6 @@ async def start_cmd(message: Message, state: FSMContext):
         file_id = args[1]
         file_data = await db.get_file(file_id)
         if file_data:
-            # Check force join
             settings = await db.get_settings()
             force_channels = settings.get("force_join", [])
             
@@ -468,7 +474,6 @@ async def start_cmd(message: Message, state: FSMContext):
                 not_joined = await check_user_joined(message.bot, user.id, force_channels)
                 
                 if not_joined:
-                    # User needs to join channels first
                     await state.update_data(pending_file=file_id)
                     
                     txt = (
@@ -480,7 +485,6 @@ async def start_cmd(message: Message, state: FSMContext):
                     await message.answer(txt, reply_markup=force_join_user_kb(force_channels, not_joined))
                     return
             
-            # Check password
             if file_data.get("password"):
                 await state.update_data(pending_file=file_id)
                 await state.set_state(PasswordState.waiting)
@@ -513,10 +517,7 @@ async def start_cmd(message: Message, state: FSMContext):
         )
 
 async def check_user_joined(bot: Bot, user_id: int, channels: List[str]) -> List[tuple]:
-    """
-    Check which channels user hasn't joined
-    Returns list of (index, channel) for not-joined channels
-    """
+    """Check which channels user hasn't joined"""
     not_joined = []
     for i, ch in enumerate(channels, 1):
         try:
@@ -543,8 +544,7 @@ async def force_join_check(callback: CallbackQuery, state: FSMContext):
     not_joined = await check_user_joined(callback.bot, user_id, force_channels)
     
     if not_joined:
-        # Still not joined all channels
-        # Update the message with remaining channels
+        # Still not joined - update message with remaining
         txt = (
             "⚠️ **هنوز عضو نشدید!**\n\n"
             "لطفاً در چنل‌های زیر عضو شوید:"
@@ -558,7 +558,7 @@ async def force_join_check(callback: CallbackQuery, state: FSMContext):
         except:
             await callback.answer("❌ لطفاً همه چنل‌ها رو عضو شوید!", show_alert=True)
     else:
-        # All joined! Send the file
+        # All joined!
         data = await state.get_data()
         file_id = data.get("pending_file")
         
@@ -912,7 +912,7 @@ async def files_list_cb(callback: CallbackQuery):
     await callback.answer()
     files = await db.get_all_files()
     if not files:
-        await callback.message.edit_text("📂 فایلی نیست.", reply_markup=None)
+        await callback.message.edit_text("📂 فایلی نیست.")
         return
     await callback.message.edit_text(f"📂 فایل‌ها ({len(files)})", reply_markup=files_kb(files))
 
@@ -1071,19 +1071,9 @@ async def add_admin_save(message: Message, state: FSMContext):
         await db.add_admin(uid)
         await message.answer(f"✅ ادمین <code>{uid}</code> اضافه شد.", reply_markup=admin_main_menu())
     except:
-        await message.answer("❌ آیدی معتبر نیست.")
+        await message.answer("❌ آیدی معتبر نیست. دوباره تلاش کنید:")
+        return  # Stay in state for retry
     await state.clear()
-
-@router.callback_query(F.data.startswith("admin_"))
-async def remove_admin_cb(callback: CallbackQuery):
-    await callback.answer()
-    aid = callback.data.replace("admin_", "")
-    if aid == str(ADMIN_ID):
-        await callback.answer("❌ مالک حذف نمی‌شود.", show_alert=True)
-        return
-    if await db.remove_admin(int(aid)):
-        await callback.answer("✅ حذف شد")
-    await admins_list_cb(callback)
 
 # ==================== SETTINGS HANDLERS ====================
 @router.callback_query(F.data == "settings")
@@ -1117,23 +1107,43 @@ async def save_timer(message: Message, state: FSMContext):
         if 0 <= m <= 60:
             await db.update_setting("delete_timer", m*60)
             await message.answer(f"✅ {m} دقیقه.", reply_markup=admin_main_menu())
+            await state.clear()
+        else:
+            await message.answer("❌ عدد باید بین 0 تا 60 باشد. دوباره تلاش کنید:")
+            return  # Stay in state
     except:
-        await message.answer("❌ عدد معتبر نیست.")
-    await state.clear()
+        await message.answer("❌ لطفاً یک عدد معتبر وارد کنید:")
+        return  # Stay in state
 
 @router.callback_query(F.data == "set_logchan")
 async def set_logchan(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(SettingsState.waiting_logchan)
-    await callback.message.edit_text("📢 آیدی کانال:", reply_markup=back_inline("settings"))
+    await callback.message.edit_text(
+        "📢 آیدی کانال گزارش را بفرستید:\n"
+        "مثال: @log_channel یا -100123456",
+        reply_markup=back_inline("settings")
+    )
 
 @router.message(SettingsState.waiting_logchan)
 async def save_logchan(message: Message, state: FSMContext):
-    await db.update_setting("log_channel", message.text)
-    await message.answer(f"✅ تنظیم شد.", reply_markup=admin_main_menu())
-    await state.clear()
+    ch = message.text.strip()
+    # Validate channel
+    try:
+        await message.bot.get_chat(ch)
+        await db.update_setting("log_channel", ch)
+        await message.answer(f"✅ کانال گزارش تنظیم شد.", reply_markup=admin_main_menu())
+        await state.clear()
+    except Exception as e:
+        await message.answer(
+            f"❌ خطا در تنظیم کانال:\n{str(e)[:100]}\n\n"
+            "مطمئن شوید ربات در کانال عضو است و آیدی صحیح است.\n"
+            "دوباره تلاش کنید:",
+            reply_markup=back_inline("settings")
+        )
+        return  # Stay in state for retry
 
-# ==================== FORCE JOIN ADMIN MANAGEMENT ====================
+# ==================== FORCE JOIN ADMIN MANAGEMENT (FIXED) ====================
 @router.callback_query(F.data == "set_forcejoin")
 async def forcejoin_menu(callback: CallbackQuery):
     await callback.answer()
@@ -1156,31 +1166,120 @@ async def fj_add_start(callback: CallbackQuery, state: FSMContext):
     await state.set_state(SettingsState.waiting_forcejoin)
     await callback.message.edit_text(
         "➕ **افزودن چنل/گروه جدید**\n\n"
-        "آیدی چنل یا گروه را بفرستید:\n"
-        "مثال: @my_channel یا -100123456\n\n"
-        "⚠️ ربات باید در چنل/گروه ادمین باشد.",
-        reply_markup=back_inline("set_forcejoin")
+        "📌 **فرمت‌های قابل قبول:**\n"
+        "• چنل عمومی: <code>@channel_name</code>\n"
+        "• گروه عمومی: <code>@group_name</code>\n"
+        "• چنل خصوصی: <code>-100123456789</code>\n"
+        "• گروه خصوصی: <code>-100123456789</code>\n\n"
+        "⚠️ **نکات مهم:**\n"
+        "• ربات باید در چنل/گروه <b>ادمین</b> باشد\n"
+        "• چنل/گروه باید <b>عمومی</b> یا ربات ادمین باشد\n\n"
+        "📤 حالا آیدی را بفرستید:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_forcejoin")]
+        ])
     )
 
 @router.message(SettingsState.waiting_forcejoin)
 async def fj_add_save(message: Message, state: FSMContext):
     ch = message.text.strip()
     
-    # Try to verify bot can access the chat
-    try:
-        await message.bot.get_chat(ch)
-        if await db.add_force_join(ch):
-            await message.answer(f"✅ {ch} با موفقیت اضافه شد.", reply_markup=admin_main_menu())
-        else:
-            await message.answer("❌ این چنل قبلاً اضافه شده.")
-    except Exception as e:
+    # Validate format
+    if not (ch.startswith("@") or ch.startswith("-100")):
         await message.answer(
-            f"❌ خطا: نمی‌توان به این چنل/گروه دسترسی پیدا کرد.\n"
-            f"مطمئن شوید ربات ادمین است و آیدی صحیح است.\n\n"
-            f"خطا: {str(e)[:100]}"
+            "❌ **فرمت اشتباه است!**\n\n"
+            "فرمت‌های صحیح:\n"
+            "• <code>@channel_name</code>\n"
+            "• <code>-100123456789</code>\n\n"
+            "🔄 لطفاً دوباره با فرمت صحیح ارسال کنید:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_forcejoin")]
+            ])
         )
+        return  # Stay in state for retry
     
-    await state.clear()
+    # Check if already exists
+    s = await db.get_settings()
+    if ch in s.get("force_join", []):
+        await message.answer(
+            "❌ این چنل قبلاً اضافه شده است!\n"
+            "🔄 یک چنل دیگر وارد کنید:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_forcejoin")]
+            ])
+        )
+        return  # Stay in state
+    
+    # Try to access the chat
+    try:
+        chat = await message.bot.get_chat(ch)
+        
+        # Try to check if bot is admin
+        try:
+            bot_member = await message.bot.get_chat_member(ch, message.bot.id)
+            if bot_member.status not in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
+                await message.answer(
+                    "⚠️ **ربات در این چنل/گروه ادمین نیست!**\n\n"
+                    f"ربات باید در <b>{ch}</b> ادمین باشد تا بتواند عضویت کاربران را بررسی کند.\n\n"
+                    "لطفاً ابتدا ربات را ادمین کنید، سپس دوباره تلاش کنید.\n"
+                    "🔄 آیدی را دوباره ارسال کنید:",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_forcejoin")]
+                    ])
+                )
+                return  # Stay in state
+        except:
+            # Can't check admin status, but chat is accessible
+            pass
+        
+        # Add channel
+        if await db.add_force_join(ch):
+            await message.answer(
+                f"✅ **چنل با موفقیت اضافه شد!**\n\n"
+                f"📢 نام: {chat.title or ch}\n"
+                f"🆔 آیدی: {ch}\n\n"
+                f"کاربران برای دریافت فایل باید عضو این چنل باشند.",
+                reply_markup=admin_main_menu()
+            )
+            await state.clear()
+        else:
+            await message.answer("❌ خطا در ذخیره‌سازی.")
+            await state.clear()
+    
+    except Exception as e:
+        error_msg = str(e)
+        
+        if "chat not found" in error_msg.lower():
+            await message.answer(
+                "❌ **چنل/گروه پیدا نشد!**\n\n"
+                "علت‌های احتمالی:\n"
+                "• آیدی اشتباه است\n"
+                "• چنل/گروه خصوصی است و ربات عضو نیست\n"
+                "• ربات در چنل/گروه ادمین نیست\n\n"
+                "🔄 لطفاً آیدی صحیح را دوباره ارسال کنید:",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_forcejoin")]
+                ])
+            )
+        elif "bot is not a member" in error_msg.lower():
+            await message.answer(
+                "❌ **ربات عضو این چنل/گروه نیست!**\n\n"
+                "لطفاً ابتدا ربات را به چنل/گروه اضافه کنید و ادمین کنید.\n\n"
+                "🔄 سپس دوباره تلاش کنید:",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_forcejoin")]
+                ])
+            )
+        else:
+            await message.answer(
+                f"❌ **خطا در افزودن چنل:**\n\n"
+                f"<code>{error_msg[:150]}</code>\n\n"
+                "🔄 لطفاً دوباره تلاش کنید یا از آیدی دیگری استفاده کنید:",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_forcejoin")]
+                ])
+            )
+        return  # Stay in state for retry
 
 @router.callback_query(F.data.startswith("fj_del_"))
 async def fj_delete(callback: CallbackQuery):
@@ -1228,7 +1327,6 @@ async def on_startup(bot: Bot):
         d["admins"][str(ADMIN_ID)] = {"role": "owner", "added": datetime.now().isoformat()}
         await db._write(ADMINS_FILE, d)
     
-    # Ensure new settings keys exist
     s = await db.get_settings()
     if "force_join" not in s:
         await db.update_setting("force_join", [])
