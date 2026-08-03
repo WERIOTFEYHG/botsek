@@ -1,7 +1,7 @@
 """
-Telegram File Uploader Bot - v6.2 Professional
+Telegram File Uploader Bot - v6.3 Professional
 Aiogram 3.x | JSON Storage | Railway Ready
-Fixed HTML Parsing Bug | Smart Validation | Professional UI
+Fixed HTML Parsing | Smart Validation | Back Buttons | Clean UI
 """
 
 import asyncio
@@ -27,7 +27,6 @@ from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
-from aiogram.utils.text_decorations import html_decoration as hd
 from dotenv import load_dotenv
 import aiofiles
 
@@ -51,7 +50,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Helper function to safely escape HTML
 def safe_html(text: str) -> str:
     """Escape HTML special characters"""
     if not text:
@@ -471,11 +469,8 @@ async def start_cmd(message: Message, state: FSMContext):
                 
                 if not_joined:
                     await state.update_data(pending_file=file_id)
-                    txt = (
-                        "🔒 **برای دریافت فایل، عضو شوید**\n\n"
-                        "📢 لطفاً ابتدا در چنل‌های زیر عضو شوید:\n\n"
-                        "پس از عضویت، دکمه بررسی را بزنید."
-                    )
+                    # CLEAN SINGLE MESSAGE for user
+                    txt = "📢 **لطفاً ابتدا در چنل‌های زیر عضو شوید**\n\nپس از عضویت، دکمه بررسی را بزنید."
                     await message.answer(txt, reply_markup=force_join_user_kb(force_channels, not_joined))
                     return
             
@@ -531,7 +526,8 @@ async def force_join_check(callback: CallbackQuery, state: FSMContext):
     not_joined = await check_user_joined(callback.bot, user_id, force_channels)
     
     if not_joined:
-        txt = "⚠️ **هنوز عضو نشدید!**\n\nلطفاً در چنل‌های زیر عضو شوید:"
+        # CLEAN SINGLE MESSAGE
+        txt = "📢 **لطفاً ابتدا در چنل‌های زیر عضو شوید**\n\nپس از عضویت، دکمه بررسی را بزنید."
         try:
             await callback.message.edit_text(txt, reply_markup=force_join_user_kb(force_channels, not_joined))
             await callback.answer("❌ هنوز همه چنل‌ها رو عضو نشدید!", show_alert=True)
@@ -1118,7 +1114,7 @@ async def save_logchan(message: Message, state: FSMContext):
         )
         return
 
-# ==================== FORCE JOIN ADMIN (FIXED HTML BUG) ====================
+# ==================== FORCE JOIN ADMIN (WITH BACK BUTTON AFTER SUCCESS) ====================
 @router.callback_query(F.data == "set_forcejoin")
 async def forcejoin_menu(callback: CallbackQuery):
     await callback.answer()
@@ -1208,7 +1204,10 @@ async def fj_add_save(message: Message, state: FSMContext):
                 f"✅ **چنل با موفقیت اضافه شد!**\n\n"
                 f"📢 نام: {safe_html(chat.title or ch)}\n"
                 f"🆔 آیدی: {safe_html(ch)}",
-                reply_markup=admin_main_menu()
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔙 بازگشت به لیست چنل‌ها", callback_data="set_forcejoin")],
+                    [InlineKeyboardButton(text="🏠 بازگشت به منوی اصلی", callback_data="panel")]
+                ])
             )
             await state.clear()
         else:
