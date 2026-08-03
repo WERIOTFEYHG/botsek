@@ -1,7 +1,7 @@
 """
-Telegram File Uploader Bot - v6.4 Professional
+Telegram File Uploader Bot - v7.0 Professional
 Aiogram 3.x | JSON Storage | Railway Ready
-Fixed HTML Parsing | Smart Validation | Clean Back Navigation
+Fixed HTML | Smart Validation | Timer Management | Clean UI
 """
 
 import asyncio
@@ -368,7 +368,12 @@ def admins_kb(admins: Dict):
 
 def settings_kb(settings: Dict):
     """Settings menu - Force Join is FIRST"""
-    timer = settings.get("delete_timer", 300) // 60
+    timer_val = settings.get("delete_timer", 300)
+    if timer_val == 0:
+        timer_text = "⏱ تایمر حذف پست: خاموش"
+    else:
+        timer_text = f"⏱ تایمر حذف پست: {timer_val // 60} دقیقه"
+    
     fj = settings.get("force_join", [])
     fj_count = len(fj)
     
@@ -376,9 +381,34 @@ def settings_kb(settings: Dict):
     b.row(InlineKeyboardButton(text=f"🔗 عضویت اجباری ({fj_count})", callback_data="set_forcejoin"))
     b.row(InlineKeyboardButton(text="📢 کانال گزارش", callback_data="set_logchan"))
     b.row(InlineKeyboardButton(text="👋 پیام خوشامد", callback_data="set_welcome"))
-    b.row(InlineKeyboardButton(text=f"⏱ تایمر حذف: {timer} دقیقه", callback_data="set_timer"))
+    b.row(InlineKeyboardButton(text=timer_text, callback_data="set_timer"))
     b.row(InlineKeyboardButton(text="🔙 بازگشت به منو", callback_data="panel"))
     return b.as_markup()
+
+def timer_settings_kb(settings: Dict):
+    """Timer management with on/off and time setting"""
+    timer_val = settings.get("delete_timer", 300)
+    
+    b = InlineKeyboardBuilder()
+    
+    if timer_val == 0:
+        b.row(InlineKeyboardButton(text="⏱ وضعیت: خاموش 🔴", callback_data="noop"))
+        b.row(InlineKeyboardButton(text="🔵 روشن کردن تایمر", callback_data="timer_on"))
+    else:
+        timer_minutes = timer_val // 60
+        b.row(InlineKeyboardButton(text=f"⏱ وضعیت: {timer_minutes} دقیقه 🟢", callback_data="noop"))
+        b.row(InlineKeyboardButton(text="🔴 خاموش کردن تایمر", callback_data="timer_off"))
+    
+    b.row(InlineKeyboardButton(text="⏰ تنظیم زمان جدید", callback_data="timer_set"))
+    b.row(InlineKeyboardButton(text="🔙 بازگشت به تنظیمات", callback_data="settings"))
+    
+    return b.as_markup()
+
+def back_to_timer_kb():
+    """Back button to timer menu"""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 بازگشت به تنظیمات تایمر", callback_data="set_timer")]
+    ])
 
 def force_join_admin_kb(channels: List[str]):
     """Force join management for admin panel"""
@@ -1066,27 +1096,124 @@ async def save_welcome(message: Message, state: FSMContext):
     await message.answer("✅ ذخیره شد.", reply_markup=admin_main_menu())
     await state.clear()
 
+# ==================== TIMER MANAGEMENT ====================
 @router.callback_query(F.data == "set_timer")
-async def set_timer(callback: CallbackQuery, state: FSMContext):
+async def timer_menu(callback: CallbackQuery):
+    """Show timer management menu"""
+    await callback.answer()
+    s = await db.get_settings()
+    
+    timer_val = s.get("delete_timer", 300)
+    if timer_val == 0:
+        status = "🔴 خاموش"
+    else:
+        status = f"🟢 {timer_val // 60} دقیقه"
+    
+    await callback.message.edit_text(
+        f"⏱ **تنظیمات تایمر حذف پست**\n\n"
+        f"📌 وضعیت فعلی: {status}\n\n"
+        f"با این قابلیت، پیام‌های فایل ارسالی ربات پس از مدت زمان تعیین شده حذف می‌شوند.\n"
+        f"پیام کاربران هرگز حذف نمی‌شود.",
+        reply_markup=timer_settings_kb(s)
+    )
+
+@router.callback_query(F.data == "timer_on")
+async def timer_on(callback: CallbackQuery):
+    """Turn timer on with default 5 minutes"""
+    await callback.answer()
+    await db.update_setting("delete_timer", 300)
+    await db.add_log("settings", callback.from_user.id, "Timer turned ON (5 min)")
+    
+    s = await db.get_settings()
+    await callback.message.edit_text(
+        f"✅ **تایمر با موفقیت روشن شد!**\n\n"
+        f"⏱ مدت زمان: ۵ دقیقه\n"
+        f"📌 پیام‌های فایل پس از ۵ دقیقه حذف می‌شوند.",
+        reply_markup=timer_settings_kb(s)
+    )
+
+@router.callback_query(F.data == "timer_off")
+async def timer_off(callback: CallbackQuery):
+    """Turn timer off"""
+    await callback.answer()
+    await db.update_setting("delete_timer", 0)
+    await db.add_log("settings", callback.from_user.id, "Timer turned OFF")
+    
+    s = await db.get_settings()
+    await callback.message.edit_text(
+        f"✅ **تایمر با موفقیت خاموش شد!**\n\n"
+        f"📌 پیام‌های فایل دیگر حذف نمی‌شوند.",
+        reply_markup=timer_settings_kb(s)
+    )
+
+@router.callback_query(F.data == "timer_set")
+async def timer_set_start(callback: CallbackQuery, state: FSMContext):
+    """Ask for new timer value"""
     await callback.answer()
     await state.set_state(SettingsState.waiting_timer)
-    await callback.message.edit_text("⏱ زمان (دقیقه):", reply_markup=back_inline("settings"))
+    
+    await callback.message.edit_text(
+        "⏰ **لطفاً زمان را برحسب دقیقه وارد نمایید:**\n\n"
+        "📌 حداقل: ۱ دقیقه\n"
+        "📌 حداکثر: ۶۰ دقیقه\n"
+        "📌 برای خاموش کردن: ۰\n\n"
+        "مثال: ۱۰",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_timer")]
+        ])
+    )
 
 @router.message(SettingsState.waiting_timer)
-async def save_timer(message: Message, state: FSMContext):
+async def timer_set_save(message: Message, state: FSMContext):
+    """Save new timer value"""
     try:
-        m = int(message.text)
-        if 0 <= m <= 60:
-            await db.update_setting("delete_timer", m*60)
-            await message.answer(f"✅ {m} دقیقه.", reply_markup=admin_main_menu())
-            await state.clear()
+        mins = int(message.text)
+        
+        if mins == 0:
+            await db.update_setting("delete_timer", 0)
+            await db.add_log("settings", message.from_user.id, "Timer set to OFF")
+            
+            await message.answer(
+                "✅ **با موفقیت تنظیم شد!**\n\n"
+                "⏱ تایمر: خاموش 🔴\n"
+                "📌 پیام‌ها حذف نمی‌شوند.",
+                reply_markup=back_to_timer_kb()
+            )
+        
+        elif 1 <= mins <= 60:
+            await db.update_setting("delete_timer", mins * 60)
+            await db.add_log("settings", message.from_user.id, f"Timer set to {mins} min")
+            
+            await message.answer(
+                f"✅ **با موفقیت تنظیم شد!**\n\n"
+                f"⏱ مدت زمان: {mins} دقیقه 🟢\n"
+                f"📌 پیام‌های فایل پس از {mins} دقیقه حذف می‌شوند.",
+                reply_markup=back_to_timer_kb()
+            )
+        
         else:
-            await message.answer("❌ عدد باید بین 0 تا 60 باشد. دوباره تلاش کنید:")
+            await message.answer(
+                "❌ عدد باید بین ۰ تا ۶۰ باشد.\n"
+                "🔄 لطفاً دوباره تلاش کنید:",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_timer")]
+                ])
+            )
             return
+    
     except:
-        await message.answer("❌ لطفاً یک عدد معتبر وارد کنید:")
+        await message.answer(
+            "❌ لطفاً یک عدد معتبر وارد کنید.\n"
+            "🔄 دوباره تلاش کنید:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_timer")]
+            ])
+        )
         return
+    
+    await state.clear()
 
+# ==================== LOG CHANNEL ====================
 @router.callback_query(F.data == "set_logchan")
 async def set_logchan(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
@@ -1151,7 +1278,6 @@ async def fj_add_start(callback: CallbackQuery, state: FSMContext):
 async def fj_add_save(message: Message, state: FSMContext):
     ch = message.text.strip()
     
-    # Validate format
     if not (ch.startswith("@") or ch.startswith("-100")):
         await message.answer(
             "❌ **فرمت اشتباه است!**\n\n"
@@ -1165,7 +1291,6 @@ async def fj_add_save(message: Message, state: FSMContext):
         )
         return
     
-    # Check duplicate
     s = await db.get_settings()
     if ch in s.get("force_join", []):
         await message.answer(
@@ -1177,11 +1302,9 @@ async def fj_add_save(message: Message, state: FSMContext):
         )
         return
     
-    # Try to access the chat
     try:
         chat = await message.bot.get_chat(ch)
         
-        # Check if bot is admin
         try:
             bot_member = await message.bot.get_chat_member(ch, message.bot.id)
             if bot_member.status not in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
@@ -1196,7 +1319,6 @@ async def fj_add_save(message: Message, state: FSMContext):
         except:
             pass
         
-        # Add channel - SUCCESS with SINGLE back button
         if await db.add_force_join(ch):
             await message.answer(
                 f"✅ **چنل با موفقیت اضافه شد!**\n\n"
