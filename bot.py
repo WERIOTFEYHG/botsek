@@ -1,7 +1,7 @@
 """
-Telegram File Uploader Bot - v6.1 Professional
+Telegram File Uploader Bot - v6.2 Professional
 Aiogram 3.x | JSON Storage | Railway Ready
-Fixed Force Join | Improved Settings | Smart Validation
+Fixed HTML Parsing Bug | Smart Validation | Professional UI
 """
 
 import asyncio
@@ -27,6 +27,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
+from aiogram.utils.text_decorations import html_decoration as hd
 from dotenv import load_dotenv
 import aiofiles
 
@@ -49,6 +50,13 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logger = logging.getLogger(__name__)
+
+# Helper function to safely escape HTML
+def safe_html(text: str) -> str:
+    """Escape HTML special characters"""
+    if not text:
+        return ""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 # ==================== JSON MANAGER ====================
 class JSONManager:
@@ -363,20 +371,14 @@ def admins_kb(admins: Dict):
 def settings_kb(settings: Dict):
     """Settings menu - Force Join is now FIRST"""
     timer = settings.get("delete_timer", 300) // 60
-    log_ch = settings.get("log_channel", "تنظیم نشده")
     fj = settings.get("force_join", [])
     fj_count = len(fj)
     
     b = InlineKeyboardBuilder()
-    # 🔗 عضویت اجباری - FIRST BUTTON
     b.row(InlineKeyboardButton(text=f"🔗 عضویت اجباری ({fj_count})", callback_data="set_forcejoin"))
-    # 📢 کانال گزارش
-    b.row(InlineKeyboardButton(text=f"📢 کانال گزارش", callback_data="set_logchan"))
-    # 👋 پیام خوشامد
+    b.row(InlineKeyboardButton(text="📢 کانال گزارش", callback_data="set_logchan"))
     b.row(InlineKeyboardButton(text="👋 پیام خوشامد", callback_data="set_welcome"))
-    # ⏱ تایمر حذف
     b.row(InlineKeyboardButton(text=f"⏱ تایمر حذف: {timer} دقیقه", callback_data="set_timer"))
-    # 🔙 بازگشت
     b.row(InlineKeyboardButton(text="🔙 بازگشت به منو", callback_data="panel"))
     return b.as_markup()
 
@@ -396,18 +398,13 @@ def force_join_admin_kb(channels: List[str]):
     return b.as_markup()
 
 def force_join_user_kb(channels: List[str], not_joined: List[tuple]):
-    """
-    Force join keyboard for users
-    Shows numbered buttons for channels they need to join
-    """
+    """Force join keyboard for users"""
     b = InlineKeyboardBuilder()
     
     for idx, ch in not_joined:
         display = ch.lstrip("@")
-        # For public channels/groups
         if ch.startswith("@"):
             url = f"https://t.me/{display}"
-        # For private channels/groups
         else:
             url = f"https://t.me/c/{ch.replace('-100','')}"
         
@@ -417,7 +414,6 @@ def force_join_user_kb(channels: List[str], not_joined: List[tuple]):
         ))
     
     b.row(InlineKeyboardButton(text="✅ بررسی عضویت", callback_data="fj_check"))
-    
     return b.as_markup()
 
 def download_notify_kb(file_id: str, user_id: int):
@@ -475,13 +471,11 @@ async def start_cmd(message: Message, state: FSMContext):
                 
                 if not_joined:
                     await state.update_data(pending_file=file_id)
-                    
                     txt = (
                         "🔒 **برای دریافت فایل، عضو شوید**\n\n"
                         "📢 لطفاً ابتدا در چنل‌های زیر عضو شوید:\n\n"
                         "پس از عضویت، دکمه بررسی را بزنید."
                     )
-                    
                     await message.answer(txt, reply_markup=force_join_user_kb(force_channels, not_joined))
                     return
             
@@ -506,15 +500,9 @@ async def start_cmd(message: Message, state: FSMContext):
     settings = await db.get_settings()
     
     if await db.is_admin(user.id):
-        await message.answer(
-            settings.get("welcome", "👋 سلام!"),
-            reply_markup=admin_main_menu()
-        )
+        await message.answer(settings.get("welcome", "👋 سلام!"), reply_markup=admin_main_menu())
     else:
-        await message.answer(
-            settings.get("welcome", "👋 سلام!"),
-            reply_markup=user_main_menu()
-        )
+        await message.answer(settings.get("welcome", "👋 سلام!"), reply_markup=user_main_menu())
 
 async def check_user_joined(bot: Bot, user_id: int, channels: List[str]) -> List[tuple]:
     """Check which channels user hasn't joined"""
@@ -532,7 +520,6 @@ async def check_user_joined(bot: Bot, user_id: int, channels: List[str]) -> List
 @router.callback_query(F.data == "fj_check")
 async def force_join_check(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
-    
     user_id = callback.from_user.id
     settings = await db.get_settings()
     force_channels = settings.get("force_join", [])
@@ -544,21 +531,13 @@ async def force_join_check(callback: CallbackQuery, state: FSMContext):
     not_joined = await check_user_joined(callback.bot, user_id, force_channels)
     
     if not_joined:
-        # Still not joined - update message with remaining
-        txt = (
-            "⚠️ **هنوز عضو نشدید!**\n\n"
-            "لطفاً در چنل‌های زیر عضو شوید:"
-        )
+        txt = "⚠️ **هنوز عضو نشدید!**\n\nلطفاً در چنل‌های زیر عضو شوید:"
         try:
-            await callback.message.edit_text(
-                txt,
-                reply_markup=force_join_user_kb(force_channels, not_joined)
-            )
+            await callback.message.edit_text(txt, reply_markup=force_join_user_kb(force_channels, not_joined))
             await callback.answer("❌ هنوز همه چنل‌ها رو عضو نشدید!", show_alert=True)
         except:
             await callback.answer("❌ لطفاً همه چنل‌ها رو عضو شوید!", show_alert=True)
     else:
-        # All joined!
         data = await state.get_data()
         file_id = data.get("pending_file")
         
@@ -573,8 +552,7 @@ async def force_join_check(callback: CallbackQuery, state: FSMContext):
                 await callback.answer("❌ فایل پیدا نشد.", show_alert=True)
         else:
             await callback.message.edit_text(
-                "✅ **عضویت شما تایید شد!**\n\n"
-                "حالا می‌تونید از ربات استفاده کنید.",
+                "✅ **عضویت شما تایید شد!**\n\nحالا می‌تونید از ربات استفاده کنید.",
                 reply_markup=user_main_menu()
             )
             await state.clear()
@@ -609,22 +587,20 @@ async def check_password(message: Message, state: FSMContext):
 async def notify_admins_download(bot: Bot, file_data: Dict, user):
     settings = await db.get_settings()
     log_channel = settings.get("log_channel", "")
-    
     file_caption = file_data.get("caption", "بدون کپشن")
     file_id = file_data["id"]
     downloads = file_data.get("downloads", 0)
-    
     type_icons = {"photo": "🖼", "video": "🎬", "audio": "🎵", "voice": "🎤", "animation": "✨", "sticker": "🏷", "document": "📄"}
     icon = type_icons.get(file_data.get("type", "document"), "📁")
     
     txt = (
         f"📥 **دانلود جدید**\n\n"
-        f"{icon} فایل: {file_caption[:50]}\n"
-        f"🆔: <code>{file_id}</code>\n"
+        f"{icon} فایل: {safe_html(file_caption[:50])}\n"
+        f"🆔: <code>{safe_html(file_id)}</code>\n"
         f"📊 دانلود: {downloads}\n\n"
-        f"👤 کاربر: {user.first_name}\n"
+        f"👤 کاربر: {safe_html(user.first_name)}\n"
         f"🆔: <code>{user.id}</code>\n"
-        f"📎 @{user.username or 'ندارد'}\n"
+        f"📎 @{safe_html(user.username or 'ندارد')}\n"
         f"⏰ {datetime.now().strftime('%H:%M:%S')}"
     )
     
@@ -750,7 +726,7 @@ async def menu_admins(message: Message):
     admins = await db.get_admins()
     txt = "👮 **ادمین‌ها:**\n"
     for aid, a in admins.items():
-        txt += f"• <code>{aid}</code> - {a['role']}\n"
+        txt += f"• <code>{safe_html(str(aid))}</code> - {safe_html(a['role'])}\n"
     await message.answer(txt, reply_markup=admins_kb(admins))
 
 @router.message(F.text == "📜 گزارشات")
@@ -763,7 +739,7 @@ async def menu_logs(message: Message):
         return
     txt = "📜 **گزارشات:**\n\n"
     for l in logs_list:
-        txt += f"<code>{l['time'][:19]}</code> {l['action']}\n"
+        txt += f"<code>{safe_html(l['time'][:19])}</code> {safe_html(l['action'])}\n"
     await message.answer(txt[:4000], reply_markup=admin_main_menu())
 
 @router.message(F.text == "🔗 لینک‌های فعال")
@@ -777,7 +753,7 @@ async def menu_links(message: Message):
     bot = await message.bot.get_me()
     txt = "🔗 **لینک‌ها:**\n\n"
     for fid, f in list(files.items())[:10]:
-        txt += f"• {f.get('caption','')[:20]}\n  /start {fid}\n\n"
+        txt += f"• {safe_html(f.get('caption','')[:20])}\n  /start {safe_html(fid)}\n\n"
     await message.answer(txt, reply_markup=admin_main_menu())
 
 @router.message(F.text == "💾 پشتیبان‌گیری")
@@ -861,13 +837,9 @@ async def finalize_upload(message: Message, state: FSMContext, admin_id: int):
     fid = str(uuid.uuid4())[:8]
     
     await db.add_file({
-        "id": fid,
-        "file_id": data["file_id"],
-        "type": data["file_type"],
-        "caption": data.get("caption", ""),
-        "file_name": data.get("file_name", ""),
-        "password": data.get("password", ""),
-        "admin": admin_id
+        "id": fid, "file_id": data["file_id"], "type": data["file_type"],
+        "caption": data.get("caption", ""), "file_name": data.get("file_name", ""),
+        "password": data.get("password", ""), "admin": admin_id
     })
     await db.add_log("upload", admin_id, f"Uploaded {fid}")
     
@@ -881,18 +853,14 @@ async def finalize_upload(message: Message, state: FSMContext, admin_id: int):
     txt = (
         f"✅ **آپلود موفق!**\n\n"
         f"{icon} فایل آپلود شد\n"
-        f"🆔: <code>{fid}</code>\n"
-        f"📝: {data.get('caption') or 'بدون کپشن'}\n"
+        f"🆔: <code>{safe_html(fid)}</code>\n"
+        f"📝: {safe_html(data.get('caption') or 'بدون کپشن')}\n"
         f"{lock}\n"
     )
     if data.get("password"):
-        txt += f"🔑 رمز: <code>{data.get('password')}</code>\n\n"
+        txt += f"🔑 رمز: <code>{safe_html(data.get('password'))}</code>\n\n"
     
-    txt += (
-        f"🔗 **لینک دانلود:**\n"
-        f"<a href='{link}'>📎 کلیک کنید</a>\n"
-        f"<code>{link}</code>"
-    )
+    txt += f"🔗 **لینک دانلود:**\n<a href='{safe_html(link)}'>📎 کلیک کنید</a>\n<code>{safe_html(link)}</code>"
     
     await message.answer(txt, reply_markup=admin_main_menu())
     await state.clear()
@@ -934,10 +902,9 @@ async def file_info(callback: CallbackQuery):
     lock = "🔒 دارد" if f.get("password") else "🔓 ندارد"
     txt = (
         f"📁 **اطلاعات فایل**\n\n"
-        f"🆔: <code>{fid}</code>\n"
-        f"📝: {f.get('caption','')}\n"
-        f"📥: {f['downloads']}\n"
-        f"{lock}\n"
+        f"🆔: <code>{safe_html(fid)}</code>\n"
+        f"📝: {safe_html(f.get('caption',''))}\n"
+        f"📥: {f['downloads']}\n{lock}\n"
         f"📅: {f['date'][:10]}"
     )
     await callback.message.edit_text(txt, reply_markup=file_actions_kb(fid))
@@ -961,8 +928,8 @@ async def get_link(callback: CallbackQuery):
         return
     bot = await callback.bot.get_me()
     link = f"https://t.me/{bot.username}?start={fid}"
-    pw = f"\n🔑 رمز: <code>{f['password']}</code>" if f.get("password") else ""
-    await callback.message.answer(f"🔗 <a href='{link}'>کلیک کنید</a>\n<code>{link}</code>{pw}")
+    pw = f"\n🔑 رمز: <code>{safe_html(f['password'])}</code>" if f.get("password") else ""
+    await callback.message.answer(f"🔗 <a href='{safe_html(link)}'>کلیک کنید</a>\n<code>{safe_html(link)}</code>{pw}")
 
 @router.callback_query(F.data.startswith("editcap_"))
 async def edit_cap_start(callback: CallbackQuery, state: FSMContext):
@@ -1038,7 +1005,7 @@ async def user_info_cb(callback: CallbackQuery):
     if not u:
         await callback.answer("❌ پیدا نشد", show_alert=True)
         return
-    txt = f"👤 {u.get('name')}\n🆔: <code>{uid}</code>\n📥: {u.get('downloads',0)}\n🚫: {'مسدود' if u.get('banned') else 'آزاد'}"
+    txt = f"👤 {safe_html(u.get('name'))}\n🆔: <code>{safe_html(uid)}</code>\n📥: {u.get('downloads',0)}\n🚫: {'مسدود' if u.get('banned') else 'آزاد'}"
     await callback.message.edit_text(txt, reply_markup=user_actions_kb(uid))
 
 @router.callback_query(F.data.startswith("ban_"))
@@ -1055,7 +1022,7 @@ async def admins_list_cb(callback: CallbackQuery):
     admins = await db.get_admins()
     txt = "👮 ادمین‌ها:\n"
     for aid, a in admins.items():
-        txt += f"• <code>{aid}</code> - {a['role']}\n"
+        txt += f"• <code>{safe_html(str(aid))}</code> - {safe_html(a['role'])}\n"
     await callback.message.edit_text(txt, reply_markup=admins_kb(admins))
 
 @router.callback_query(F.data == "add_admin")
@@ -1070,10 +1037,21 @@ async def add_admin_save(message: Message, state: FSMContext):
         uid = int(message.text)
         await db.add_admin(uid)
         await message.answer(f"✅ ادمین <code>{uid}</code> اضافه شد.", reply_markup=admin_main_menu())
+        await state.clear()
     except:
         await message.answer("❌ آیدی معتبر نیست. دوباره تلاش کنید:")
-        return  # Stay in state for retry
-    await state.clear()
+        return
+
+@router.callback_query(F.data.startswith("admin_"))
+async def remove_admin_cb(callback: CallbackQuery):
+    await callback.answer()
+    aid = callback.data.replace("admin_", "")
+    if aid == str(ADMIN_ID):
+        await callback.answer("❌ مالک حذف نمی‌شود.", show_alert=True)
+        return
+    if await db.remove_admin(int(aid)):
+        await callback.answer("✅ حذف شد")
+    await admins_list_cb(callback)
 
 # ==================== SETTINGS HANDLERS ====================
 @router.callback_query(F.data == "settings")
@@ -1110,40 +1088,37 @@ async def save_timer(message: Message, state: FSMContext):
             await state.clear()
         else:
             await message.answer("❌ عدد باید بین 0 تا 60 باشد. دوباره تلاش کنید:")
-            return  # Stay in state
+            return
     except:
         await message.answer("❌ لطفاً یک عدد معتبر وارد کنید:")
-        return  # Stay in state
+        return
 
 @router.callback_query(F.data == "set_logchan")
 async def set_logchan(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(SettingsState.waiting_logchan)
     await callback.message.edit_text(
-        "📢 آیدی کانال گزارش را بفرستید:\n"
-        "مثال: @log_channel یا -100123456",
+        "📢 آیدی کانال گزارش را بفرستید:\nمثال: @log_channel یا -100123456",
         reply_markup=back_inline("settings")
     )
 
 @router.message(SettingsState.waiting_logchan)
 async def save_logchan(message: Message, state: FSMContext):
     ch = message.text.strip()
-    # Validate channel
     try:
         await message.bot.get_chat(ch)
         await db.update_setting("log_channel", ch)
-        await message.answer(f"✅ کانال گزارش تنظیم شد.", reply_markup=admin_main_menu())
+        await message.answer("✅ کانال گزارش تنظیم شد.", reply_markup=admin_main_menu())
         await state.clear()
     except Exception as e:
+        err = safe_html(str(e)[:100])
         await message.answer(
-            f"❌ خطا در تنظیم کانال:\n{str(e)[:100]}\n\n"
-            "مطمئن شوید ربات در کانال عضو است و آیدی صحیح است.\n"
-            "دوباره تلاش کنید:",
+            f"❌ خطا: {err}\n\nمطمئن شوید ربات عضو کانال است.\nدوباره تلاش کنید:",
             reply_markup=back_inline("settings")
         )
-        return  # Stay in state for retry
+        return
 
-# ==================== FORCE JOIN ADMIN MANAGEMENT (FIXED) ====================
+# ==================== FORCE JOIN ADMIN (FIXED HTML BUG) ====================
 @router.callback_query(F.data == "set_forcejoin")
 async def forcejoin_menu(callback: CallbackQuery):
     await callback.answer()
@@ -1153,7 +1128,7 @@ async def forcejoin_menu(callback: CallbackQuery):
     if channels:
         txt = "🔗 **چنل‌های عضویت اجباری:**\n\n"
         for i, ch in enumerate(channels, 1):
-            txt += f"{i}. {ch}\n"
+            txt += f"{i}. {safe_html(ch)}\n"
         txt += "\nبرای حذف یا افزودن از دکمه‌ها استفاده کنید."
     else:
         txt = "🔗 **عضویت اجباری**\n\nهیچ چنلی تنظیم نشده.\nبرای افزودن کلیک کنید."
@@ -1167,13 +1142,11 @@ async def fj_add_start(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         "➕ **افزودن چنل/گروه جدید**\n\n"
         "📌 **فرمت‌های قابل قبول:**\n"
-        "• چنل عمومی: <code>@channel_name</code>\n"
-        "• گروه عمومی: <code>@group_name</code>\n"
-        "• چنل خصوصی: <code>-100123456789</code>\n"
-        "• گروه خصوصی: <code>-100123456789</code>\n\n"
-        "⚠️ **نکات مهم:**\n"
-        "• ربات باید در چنل/گروه <b>ادمین</b> باشد\n"
-        "• چنل/گروه باید <b>عمومی</b> یا ربات ادمین باشد\n\n"
+        "• چنل عمومی: @channel_name\n"
+        "• گروه عمومی: @group_name\n"
+        "• چنل خصوصی: -100123456789\n"
+        "• گروه خصوصی: -100123456789\n\n"
+        "⚠️ ربات باید در چنل/گروه ادمین باشد.\n\n"
         "📤 حالا آیدی را بفرستید:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_forcejoin")]
@@ -1189,16 +1162,16 @@ async def fj_add_save(message: Message, state: FSMContext):
         await message.answer(
             "❌ **فرمت اشتباه است!**\n\n"
             "فرمت‌های صحیح:\n"
-            "• <code>@channel_name</code>\n"
-            "• <code>-100123456789</code>\n\n"
+            "• @channel_name\n"
+            "• -100123456789\n\n"
             "🔄 لطفاً دوباره با فرمت صحیح ارسال کنید:",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_forcejoin")]
             ])
         )
-        return  # Stay in state for retry
+        return
     
-    # Check if already exists
+    # Check duplicate
     s = await db.get_settings()
     if ch in s.get("force_join", []):
         await message.answer(
@@ -1208,37 +1181,33 @@ async def fj_add_save(message: Message, state: FSMContext):
                 [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_forcejoin")]
             ])
         )
-        return  # Stay in state
+        return
     
     # Try to access the chat
     try:
         chat = await message.bot.get_chat(ch)
         
-        # Try to check if bot is admin
+        # Check if bot is admin
         try:
             bot_member = await message.bot.get_chat_member(ch, message.bot.id)
             if bot_member.status not in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
                 await message.answer(
-                    "⚠️ **ربات در این چنل/گروه ادمین نیست!**\n\n"
-                    f"ربات باید در <b>{ch}</b> ادمین باشد تا بتواند عضویت کاربران را بررسی کند.\n\n"
-                    "لطفاً ابتدا ربات را ادمین کنید، سپس دوباره تلاش کنید.\n"
-                    "🔄 آیدی را دوباره ارسال کنید:",
+                    f"⚠️ **ربات در {safe_html(ch)} ادمین نیست!**\n\n"
+                    "لطفاً ابتدا ربات را ادمین کنید، سپس دوباره ارسال کنید:",
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                         [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_forcejoin")]
                     ])
                 )
-                return  # Stay in state
+                return
         except:
-            # Can't check admin status, but chat is accessible
             pass
         
         # Add channel
         if await db.add_force_join(ch):
             await message.answer(
                 f"✅ **چنل با موفقیت اضافه شد!**\n\n"
-                f"📢 نام: {chat.title or ch}\n"
-                f"🆔 آیدی: {ch}\n\n"
-                f"کاربران برای دریافت فایل باید عضو این چنل باشند.",
+                f"📢 نام: {safe_html(chat.title or ch)}\n"
+                f"🆔 آیدی: {safe_html(ch)}",
                 reply_markup=admin_main_menu()
             )
             await state.clear()
@@ -1247,45 +1216,32 @@ async def fj_add_save(message: Message, state: FSMContext):
             await state.clear()
     
     except Exception as e:
-        error_msg = str(e)
+        err = safe_html(str(e)[:200])
         
-        if "chat not found" in error_msg.lower():
-            await message.answer(
-                "❌ **چنل/گروه پیدا نشد!**\n\n"
-                "علت‌های احتمالی:\n"
-                "• آیدی اشتباه است\n"
-                "• چنل/گروه خصوصی است و ربات عضو نیست\n"
-                "• ربات در چنل/گروه ادمین نیست\n\n"
-                "🔄 لطفاً آیدی صحیح را دوباره ارسال کنید:",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_forcejoin")]
-                ])
-            )
-        elif "bot is not a member" in error_msg.lower():
-            await message.answer(
-                "❌ **ربات عضو این چنل/گروه نیست!**\n\n"
-                "لطفاً ابتدا ربات را به چنل/گروه اضافه کنید و ادمین کنید.\n\n"
-                "🔄 سپس دوباره تلاش کنید:",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_forcejoin")]
-                ])
-            )
+        if "chat not found" in str(e).lower():
+            hint = "چنل/گروه پیدا نشد (آیدی اشتباه یا خصوصی است و ربات عضو نیست)"
+        elif "bot is not a member" in str(e).lower():
+            hint = "ربات عضو این چنل/گروه نیست"
+        elif "not enough rights" in str(e).lower():
+            hint = "ربات دسترسی کافی ندارد (باید ادمین باشد)"
         else:
-            await message.answer(
-                f"❌ **خطا در افزودن چنل:**\n\n"
-                f"<code>{error_msg[:150]}</code>\n\n"
-                "🔄 لطفاً دوباره تلاش کنید یا از آیدی دیگری استفاده کنید:",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_forcejoin")]
-                ])
-            )
+            hint = err
+        
+        await message.answer(
+            f"❌ **خطا در افزودن چنل:**\n\n"
+            f"{hint}\n\n"
+            "🔄 لطفاً دوباره تلاش کنید:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🔙 بازگشت", callback_data="set_forcejoin")]
+            ])
+        )
         return  # Stay in state for retry
 
 @router.callback_query(F.data.startswith("fj_del_"))
 async def fj_delete(callback: CallbackQuery):
     ch = callback.data.replace("fj_del_", "")
     if await db.remove_force_join(ch):
-        await callback.answer(f"✅ {ch} حذف شد.")
+        await callback.answer(f"✅ حذف شد.")
     else:
         await callback.answer("❌ خطا در حذف.", show_alert=True)
     await forcejoin_menu(callback)
