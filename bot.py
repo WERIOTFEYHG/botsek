@@ -883,11 +883,10 @@ async def show_stats_message(message: Message, edit_mode: bool = False):
     lines.append(f"📅 {now.strftime('%Y/%m/%d')}  ⏰ {now.strftime('%H:%M:%S')}")
     
     table = "```\n" + "\n".join(lines) + "\n```"
-    
-    if edit_mode:
-        await message.edit_text(table, reply_markup=stats_kb())
+     if edit_mode:
+        await message.edit_text(table, reply_markup=stats_kb(), parse_mode=None)
     else:
-        await message.answer(table, reply_markup=stats_kb())
+        await message.answer(table, reply_markup=stats_kb(), parse_mode=None)
 
 # ==================== FORCE JOIN STATISTICS ====================
 @router.callback_query(F.data == "force_join_stats")
