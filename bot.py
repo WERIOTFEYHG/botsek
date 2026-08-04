@@ -1,7 +1,7 @@
 """
-Telegram File Uploader Bot - v12.1 Professional - FULLY FIXED
+Telegram File Uploader Bot - v12.2 Professional - FULLY FIXED
 Aiogram 3.x | JSON Storage | Railway Ready
-Enhanced User Management | Chat with Users | All Features
+All Syntax Errors Fixed | Enhanced User Management | Chat System
 """
 
 import asyncio
@@ -120,11 +120,13 @@ class JSONManager:
                 await f.write(json.dumps(data, indent=2, ensure_ascii=False))
 
     async def is_bot_active(self) -> bool: return (await self.get_settings()).get("bot_active", True)
+    
     async def toggle_bot(self) -> bool:
         s = await self.get_settings(); s["bot_active"] = not s.get("bot_active", True)
         await self.update_setting("bot_active", s["bot_active"]); return s["bot_active"]
 
     async def is_forward_locked(self) -> bool: return (await self.get_settings()).get("forward_lock", False)
+    
     async def toggle_forward_lock(self) -> bool:
         s = await self.get_settings(); s["forward_lock"] = not s.get("forward_lock", False)
         await self.update_setting("forward_lock", s["forward_lock"]); return s["forward_lock"]
@@ -171,12 +173,6 @@ class JSONManager:
     async def get_banned_users(self) -> Dict:
         users = await self.get_all_users(); return {k: v for k, v in users.items() if v.get("banned", False)}
 
-    async def search_users(self, query: str) -> List[Dict]:
-        users = await self.get_all_users(); results = []; q = query.lower()
-        for u in users.values():
-            if q in str(u.get("id", "")).lower() or q in u.get("name", "").lower() or q in u.get("username", "").lower(): results.append(u)
-        return results[:20]
-
     async def resolve_user_search(self, bot: Bot, message: Message) -> Optional[int]:
         if message.forward_from: return message.forward_from.id
         text = message.text.strip() if message.text else ""
@@ -187,9 +183,11 @@ class JSONManager:
         for uid, u in users.items():
             if u.get("username", "").lower() == text.lower(): return int(uid)
             if u.get("name", "").lower() == text.lower(): return int(uid)
-        try: chat = await bot.get_chat(f"@{text}")
+        try:
+            chat = await bot.get_chat(f"@{text}")
             if chat.type == "private": return chat.id
-        except: pass
+        except:
+            pass
         return None
 
     async def is_admin(self, uid: int) -> bool: d = await self._read(ADMINS_FILE); return str(uid) in d.get("admins", {}) or uid == ADMIN_ID
@@ -396,7 +394,7 @@ def files_kb(files: Dict, page: int = 0):
         cap = f.get("caption", "بدون کپشن")[:25]; icon = type_icons.get(f.get("type", "document"), "📁"); lock = "🔒" if f.get("password") else ""
         b.row(InlineKeyboardButton(text=f"{icon} {lock} {cap} | 📥{f['downloads']}", callback_data=f"file_{fid}"))
     if total_pages > 1:
-        nav = []; 
+        nav = []
         if page > 0: nav.append(InlineKeyboardButton(text="◀️", callback_data=f"files_pg_{page-1}"))
         nav.append(InlineKeyboardButton(text=f"{page+1}/{total_pages}", callback_data="noop"))
         if page < total_pages - 1: nav.append(InlineKeyboardButton(text="▶️", callback_data=f"files_pg_{page+1}"))
@@ -465,6 +463,7 @@ class ChatState(StatesGroup): waiting = State()
 
 # ==================== ROUTER ====================
 router = Router()
+
 # ==================== START ====================
 @router.message(Command("start"))
 async def start_cmd(message: Message, state: FSMContext):
@@ -627,7 +626,7 @@ async def force_join_stats_handler(callback: CallbackQuery):
     txt += f"\n➖➖➖➖➖➖➖➖➖➖➖➖➖\n\n📌 **مجموع اعضای یکتا:** {format_number(total_members)}\n📅 بروزرسانی: {datetime.now().strftime('%H:%M:%S')}"
     await callback.message.edit_text(txt, reply_markup=force_join_stats_kb())
 
-# ==================== USER MANAGEMENT (NEW v12.1) ====================
+# ==================== USER MANAGEMENT ====================
 @router.message(F.text == "👥 کاربران")
 async def menu_users(message: Message):
     if not await db.is_admin(message.from_user.id): return
@@ -789,17 +788,11 @@ async def admins_menu_cb(callback: CallbackQuery):
     vips = await db.get_vips()
     txt = "👮 **مدیریت ادمین‌ها و VIP**\n\n**ADMIN:**\n\n"
     if admins:
-        for aid, a in admins.items():
-            uname = a.get('username', '')
-            display = f"@{uname}-admin" if uname else f"`{aid}`-admin"
-            txt += f"{display}\n"
+        for aid, a in admins.items(): uname = a.get('username', ''); display = f"@{uname}-admin" if uname else f"`{aid}`-admin"; txt += f"{display}\n"
     else: txt += "هیچ ادمینی نیست\n"
     txt += "\n➖➖➖➖➖➖➖➖➖➖\n\n**VIP:**\n\n"
     if vips:
-        for vid, v in vips.items():
-            uname = v.get('username', '')
-            display = f"@{uname}-vip" if uname else f"`{vid}`-vip"
-            txt += f"{display}\n"
+        for vid, v in vips.items(): uname = v.get('username', ''); display = f"@{uname}-vip" if uname else f"`{vid}`-vip"; txt += f"{display}\n"
     else: txt += "هیچ VIP ای نیست\n"
     await callback.message.edit_text(txt, reply_markup=admins_main_menu_kb())
 
@@ -829,7 +822,10 @@ async def save_vip(message: Message, state: FSMContext):
 
 @router.callback_query(F.data == "remove_privileged")
 async def remove_priv(callback: CallbackQuery):
-    await callback.answer(); admins = await db.get_admins(); vips = await db.get_vips(); admins_show = {k: v for k, v in admins.items() if str(k) != str(ADMIN_ID)}
+    await callback.answer()
+    admins = await db.get_admins()
+    vips = await db.get_vips()
+    admins_show = {k: v for k, v in admins.items() if str(k) != str(ADMIN_ID)}
     if not admins_show and not vips: await callback.answer("❌ هیچکس برای حذف نیست.", show_alert=True); return
     await callback.message.edit_text("❌ انتخاب کنید:", reply_markup=remove_privileged_kb(admins_show, vips))
 
@@ -1107,5 +1103,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-
-
