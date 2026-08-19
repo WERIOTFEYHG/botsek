@@ -329,6 +329,19 @@ class JSONManager:
             return True
         return False
 
+    async def delete_all_files_in_folder(self, folder_id: str) -> int:
+        d = await self._read(FILES_FILE)
+        deleted = 0
+        to_delete = []
+        for fid, f in d["files"].items():
+            if f.get("folder", "") == folder_id:
+                to_delete.append(fid)
+        for fid in to_delete:
+            del d["files"][fid]
+            deleted += 1
+        await self._write(FILES_FILE, d)
+        return deleted
+
     async def inc_download(self, fid: str):
         d = await self._read(FILES_FILE)
         if fid in d["files"]:
@@ -387,20 +400,11 @@ class JSONManager:
     async def delete_folder(self, fid: str) -> bool:
         d = await self._read(FOLDERS_FILE)
         if fid in d["folders"]:
-            # Get all files in this folder
             files = await self.get_files_by_folder(fid)
-            
-            # Get or create temp folder
             temp_folder_id = await self.get_or_create_temp_folder()
-            
-            # Move all files to temp folder
             for file_id in files:
                 await self.update_file_folder(file_id, temp_folder_id)
-            
-            # Update file counts
             await self.update_folder_file_count(temp_folder_id)
-            
-            # Delete the folder
             del d["folders"][fid]
             await self._write(FOLDERS_FILE, d)
             return True
@@ -411,8 +415,6 @@ class JSONManager:
         for fid, folder in folders.items():
             if folder.get("name", "") == TEMP_FOLDER_NAME:
                 return fid
-        
-        # Create temp folder
         fid = str(uuid.uuid4())[:8]
         d = await self._read(FOLDERS_FILE)
         d["folders"][fid] = {
@@ -647,10 +649,13 @@ async def folders_main_kb():
     b.row(InlineKeyboardButton(text="🔙 بازگشت به منو", callback_data="panel"))
     return b.as_markup()
 
-def folder_files_kb(files: List[tuple], folder_id: str, page: int, total_pages: int):
+def folder_files_kb(files: List[tuple], folder_id: str, page: int, total_pages: int, is_temp: bool = False):
     b = InlineKeyboardBuilder()
     
     b.row(InlineKeyboardButton(text="➕ اضافه کردن فایل", callback_data=f"addfile_{folder_id}"))
+    
+    if is_temp:
+        b.row(InlineKeyboardButton(text="🗑 حذف تمامی فایل‌ها", callback_data=f"deleteallfiles_{folder_id}"))
     
     type_icons = {"photo": "🖼", "video": "🎬", "audio": "🎵", "voice": "🎤", "animation": "✨", "sticker": "🏷", "document": "📄"}
     
@@ -681,6 +686,13 @@ def folder_file_info_kb(fid: str, folder_id: str):
         [InlineKeyboardButton(text="🗑 حذف از پوشه", callback_data=f"remfromfolder_{fid}_{folder_id}")],
         [InlineKeyboardButton(text="🔙 بازگشت به پوشه", callback_data=f"folder_{folder_id}")]
     ])
+
+def folder_actions_kb(folder_id: str, is_temp: bool = False):
+    b = InlineKeyboardBuilder()
+    if not is_temp:
+        b.row(InlineKeyboardButton(text="🗑 حذف پوشه", callback_data=f"deletefolder_{folder_id}"))
+    b.row(InlineKeyboardButton(text="🔙 بازگشت به پوشه‌ها", callback_data="folders_menu"))
+    return b.as_markup()
 
 def folder_delete_confirm_kb(fid: str):
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -1032,28 +1044,35 @@ async def menu_upload(message: Message, state: FSMContext):
     
     folders = await db.get_all_folders()
     
-    if not folders:
-        b = InlineKeyboardBuilder()
-        b.row(InlineKeyboardButton(text="➕ ایجاد پوشه", callback_data="create_folder"))
-        b.row(InlineKeyboardButton(text="🔙 انصراف", callback_data="panel"))
-        await message.answer(
-            "📁 **هیچ پوشه‌ای وجود ندارد!**\n\n"
-            "لطفاً ابتدا یک پوشه ایجاد کنید.",
-            reply_markup=b.as_markup()
-        )
-        return
-    
     b = InlineKeyboardBuilder()
-    b.row(InlineKeyboardButton(text="📁 انتخاب پوشه", callback_data="noop"))
-    for fid, folder in folders.items():
-        name = folder.get("name", "بدون نام")[:25]
-        b.row(InlineKeyboardButton(text=f"📂 {name}", callback_data=f"upload_to_{fid}"))
+    b.row(InlineKeyboardButton(text="➕ ایجاد پوشه جدید", callback_data="create_folder_from_upload"))
+    
+    if folders:
+        for fid, folder in folders.items():
+            name = folder.get("name", "بدون نام")[:25]
+            b.row(InlineKeyboardButton(text=f"📂 {name}", callback_data=f"upload_to_{fid}"))
+    else:
+        b.row(InlineKeyboardButton(text="📁 هیچ پوشه‌ای وجود ندارد", callback_data="noop"))
+    
     b.row(InlineKeyboardButton(text="🔙 انصراف", callback_data="panel"))
     
     await message.answer(
-        "📁 **یک پوشه را انتخاب کنید:**\n\n"
-        "فایل شما در پوشه انتخاب شده ذخیره خواهد شد.",
+        "📤 **آپلود فایل جدید**\n\n"
+        "یک پوشه را انتخاب کنید یا پوشه جدید بسازید:",
         reply_markup=b.as_markup()
+    )
+
+@router.callback_query(F.data == "create_folder_from_upload")
+async def create_folder_from_upload(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(FolderState.waiting_name)
+    await state.update_data(from_upload=True)
+    await callback.message.edit_text(
+        "📁 **ایجاد پوشه جدید**\n\n"
+        "لطفاً نام پوشه را وارد کنید:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 انصراف", callback_data="panel")]
+        ])
     )
 
 @router.callback_query(F.data.startswith("upload_to_"))
@@ -1079,6 +1098,7 @@ async def upload_to_folder(callback: CallbackQuery, state: FSMContext):
 async def create_folder_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(FolderState.waiting_name)
+    await state.update_data(from_upload=False)
     await callback.message.edit_text(
         "📁 **ایجاد پوشه جدید**\n\n"
         "لطفاً نام پوشه را وارد کنید:",
@@ -1103,16 +1123,30 @@ async def create_folder_save(message: Message, state: FSMContext):
     folder_id = await db.add_folder(name, message.from_user.id)
     await db.add_log("folder_create", message.from_user.id, f"Created folder: {name}")
     
-    await message.answer(
-        f"✅ **پوشه با موفقیت ساخته شد!**\n\n"
-        f"📁 نام: {safe_html(name)}\n"
-        f"🆔 شناسه: <code>{folder_id}</code>",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📂 مشاهده پوشه", callback_data=f"folder_{folder_id}")],
-            [InlineKeyboardButton(text="🔙 بازگشت به پوشه‌ها", callback_data="folders_menu")]
-        ])
-    )
-    await state.clear()
+    data = await state.get_data()
+    from_upload = data.get("from_upload", False)
+    
+    if from_upload:
+        await state.update_data(upload_folder=folder_id)
+        await state.set_state(UploadState.waiting)
+        await message.answer(
+            f"✅ **پوشه با موفقیت ساخته شد!**\n\n"
+            f"📁 نام: {safe_html(name)}\n"
+            f"🆔 شناسه: <code>{folder_id}</code>\n\n"
+            f"📤 حالا فایل خود را ارسال کنید:",
+            reply_markup=back_inline("panel")
+        )
+    else:
+        await message.answer(
+            f"✅ **پوشه با موفقیت ساخته شد!**\n\n"
+            f"📁 نام: {safe_html(name)}\n"
+            f"🆔 شناسه: <code>{folder_id}</code>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📂 مشاهده پوشه", callback_data=f"folder_{folder_id}")],
+                [InlineKeyboardButton(text="🔙 بازگشت به پوشه‌ها", callback_data="folders_menu")]
+            ])
+        )
+        await state.clear()
 
 @router.callback_query(F.data == "folders_menu")
 async def folders_menu(callback: CallbackQuery):
@@ -1161,6 +1195,7 @@ async def show_folder_files(message: Message, folder: Dict, files: Dict, folder_
     
     folder_name = folder.get("name", "بدون نام")
     file_count = len(items)
+    is_temp = (folder_name == TEMP_FOLDER_NAME)
     
     txt = f"📂 **{safe_html(folder_name)}**\n\n"
     txt += f"📄 تعداد فایل‌ها: {file_count}\n"
@@ -1168,10 +1203,17 @@ async def show_folder_files(message: Message, folder: Dict, files: Dict, folder_
     
     await db.update_folder_file_count(folder_id)
     
+    kb = folder_files_kb(page_items, folder_id, page, total_pages, is_temp)
+    
+    # Add folder actions (delete folder if not temp)
+    if not is_temp:
+        kb.inline_keyboard.append([InlineKeyboardButton(text="🗑 حذف پوشه", callback_data=f"deletefolder_{folder_id}")])
+    kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 بازگشت به پوشه‌ها", callback_data="folders_menu")])
+    
     if isinstance(message, CallbackQuery):
-        await message.message.edit_text(txt, reply_markup=folder_files_kb(page_items, folder_id, page, total_pages))
+        await message.message.edit_text(txt, reply_markup=kb)
     else:
-        await message.answer(txt, reply_markup=folder_files_kb(page_items, folder_id, page, total_pages))
+        await message.answer(txt, reply_markup=kb)
 
 @router.callback_query(F.data.startswith("folderpg_"))
 async def folder_page(callback: CallbackQuery):
@@ -1447,8 +1489,7 @@ async def delete_file_start(callback: CallbackQuery, state: FSMContext):
     await state.update_data(delete_fid=fid, delete_folder=folder_id)
     await state.set_state(DeleteState.waiting_password)
     await callback.message.edit_text(
-        "🗑 **حذف فایل**\n\n"
-        "برای تایید حذف، لطفاً رمز ۳ حرفی انگلیسی را وارد کنید:",
+        "🔑 رمز حذف فایل را وارد کنید:",
         reply_markup=back_inline(f"folder_{folder_id}")
     )
 
@@ -1469,7 +1510,6 @@ async def delete_file_confirm(message: Message, state: FSMContext):
         await message.answer("❌ رمز اشتباه است. لطفاً مجدداً تلاش کنید.")
         return
     
-    # Delete the file
     await db.delete_file(fid)
     await db.update_folder_file_count(folder_id)
     await db.add_log("file_delete", message.from_user.id, f"Deleted file {fid} from folder {folder_id}")
@@ -1505,7 +1545,7 @@ async def delete_folder_start(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         f"🗑 **حذف پوشه: {safe_html(folder.get('name', 'بدون نام'))}**\n\n"
         "⚠️ تمام فایل‌های این پوشه به پوشه فایل‌های موقت منتقل می‌شوند.\n\n"
-        "برای تایید حذف، لطفاً رمز ۳ حرفی انگلیسی را وارد کنید:",
+        "🔑 رمز حذف پوشه را وارد کنید:",
         reply_markup=back_inline("folders_menu")
     )
 
@@ -1525,11 +1565,9 @@ async def delete_folder_confirm(message: Message, state: FSMContext):
         await message.answer("❌ رمز اشتباه است. لطفاً مجدداً تلاش کنید.")
         return
     
-    # Delete the folder (files will be moved to temp)
     await db.delete_folder(folder_id)
     await db.add_log("folder_delete", message.from_user.id, f"Deleted folder {folder_id}")
     
-    # Get temp folder info
     temp_folder_id = await db.get_or_create_temp_folder()
     temp_folder = await db.get_folder(temp_folder_id)
     
@@ -1538,6 +1576,61 @@ async def delete_folder_confirm(message: Message, state: FSMContext):
         f"📁 تمام فایل‌ها به پوشه فایل‌های موقت منتقل شدند.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📂 مشاهده فایل‌های موقت", callback_data=f"folder_{temp_folder_id}")],
+            [InlineKeyboardButton(text="🔙 پوشه‌ها", callback_data="folders_menu")]
+        ])
+    )
+    await state.clear()
+
+@router.callback_query(F.data.startswith("deleteallfiles_"))
+async def delete_all_files_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    folder_id = callback.data.replace("deleteallfiles_", "")
+    folder = await db.get_folder(folder_id)
+    
+    if not folder:
+        await callback.message.edit_text("❌ پوشه پیدا نشد.")
+        return
+    
+    if folder.get("name") != TEMP_FOLDER_NAME:
+        await callback.message.edit_text(
+            "❌ این گزینه فقط برای پوشه فایل‌های موقت قابل استفاده است.",
+            reply_markup=await folders_main_kb()
+        )
+        return
+    
+    await state.update_data(delete_all_folder=folder_id)
+    await state.set_state(DeleteState.waiting_password)
+    await callback.message.edit_text(
+        f"🗑 **حذف تمامی فایل‌های داخل {safe_html(folder.get('name', 'بدون نام'))}**\n\n"
+        "⚠️ تمام فایل‌های داخل این پوشه به طور کامل حذف می‌شوند.\n\n"
+        "🔑 رمز حذف تمامی فایل‌ها را وارد کنید:",
+        reply_markup=back_inline(f"folder_{folder_id}")
+    )
+
+@router.message(DeleteState.waiting_password)
+async def delete_all_files_confirm(message: Message, state: FSMContext):
+    data = await state.get_data()
+    folder_id = data.get("delete_all_folder")
+    
+    if not folder_id:
+        await message.answer("❌ خطا در شناسایی پوشه.")
+        await state.clear()
+        return
+    
+    password = message.text.strip()
+    
+    if password.lower() != "www":
+        await message.answer("❌ رمز اشتباه است. لطفاً مجدداً تلاش کنید.")
+        return
+    
+    deleted = await db.delete_all_files_in_folder(folder_id)
+    await db.update_folder_file_count(folder_id)
+    await db.add_log("delete_all_files", message.from_user.id, f"Deleted all {deleted} files from folder {folder_id}")
+    
+    await message.answer(
+        f"✅ **{deleted} فایل با موفقیت حذف شدند.**",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📂 بازگشت به پوشه", callback_data=f"folder_{folder_id}")],
             [InlineKeyboardButton(text="🔙 پوشه‌ها", callback_data="folders_menu")]
         ])
     )
@@ -2461,7 +2554,6 @@ async def broadcast_send(message: Message, state: FSMContext):
 async def on_startup(bot: Bot):
     db.init_files()
     
-    # Create temp folder if doesn't exist
     await db.get_or_create_temp_folder()
     
     d = await db._read(ADMINS_FILE)
