@@ -1473,7 +1473,7 @@ async def delete_file_start(callback: CallbackQuery, state: FSMContext):
     fid = parts[0]
     folder_id = parts[1]
     
-    await state.update_data(delete_fid=fid, delete_folder=folder_id)
+    await state.update_data(del_fid=fid, del_folder=folder_id)
     await state.set_state(DeleteState.waiting_password)
     await callback.message.edit_text(
         "🔑 رمز حذف فایل را وارد کنید:",
@@ -1483,8 +1483,8 @@ async def delete_file_start(callback: CallbackQuery, state: FSMContext):
 @router.message(DeleteState.waiting_password)
 async def delete_file_confirm(message: Message, state: FSMContext):
     data = await state.get_data()
-    fid = data.get("delete_fid")
-    folder_id = data.get("delete_folder")
+    fid = data.get("del_fid")
+    folder_id = data.get("del_folder")
     
     if not fid or not folder_id:
         await message.answer("❌ خطا در شناسایی فایل.")
@@ -1527,7 +1527,7 @@ async def delete_folder_start(callback: CallbackQuery, state: FSMContext):
         )
         return
     
-    await state.update_data(delete_folder=folder_id)
+    await state.update_data(del_folder_only=folder_id)
     await state.set_state(DeleteState.waiting_password)
     await callback.message.edit_text(
         f"🗑 **حذف پوشه: {safe_html(folder.get('name', 'بدون نام'))}**\n\n"
@@ -1539,7 +1539,7 @@ async def delete_folder_start(callback: CallbackQuery, state: FSMContext):
 @router.message(DeleteState.waiting_password)
 async def delete_folder_confirm(message: Message, state: FSMContext):
     data = await state.get_data()
-    folder_id = data.get("delete_folder")
+    folder_id = data.get("del_folder_only")
     
     if not folder_id:
         await message.answer("❌ خطا در شناسایی پوشه.")
@@ -1584,7 +1584,7 @@ async def delete_all_files_start(callback: CallbackQuery, state: FSMContext):
         )
         return
     
-    await state.update_data(delete_all_folder=folder_id)
+    await state.update_data(del_all_folder=folder_id)
     await state.set_state(DeleteState.waiting_password)
     await callback.message.edit_text(
         f"🗑 **حذف تمامی فایل‌های داخل {safe_html(folder.get('name', 'بدون نام'))}**\n\n"
@@ -1596,7 +1596,7 @@ async def delete_all_files_start(callback: CallbackQuery, state: FSMContext):
 @router.message(DeleteState.waiting_password)
 async def delete_all_files_confirm(message: Message, state: FSMContext):
     data = await state.get_data()
-    folder_id = data.get("delete_all_folder")
+    folder_id = data.get("del_all_folder")
     
     if not folder_id:
         await message.answer("❌ خطا در شناسایی پوشه.")
