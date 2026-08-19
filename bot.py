@@ -1,8 +1,3 @@
-```python
-"""
-Telegram File Uploader Bot - v13.0 WITH FOLDER SYSTEM
-Aiogram 3.x | JSON Storage | Railway Ready
-"""
 
 import asyncio
 import json
