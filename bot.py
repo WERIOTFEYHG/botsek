@@ -664,7 +664,8 @@ def folder_files_kb(files: List[tuple], folder_id: str, page: int, total_pages: 
         icon = type_icons.get(f.get("type", "document"), "📁")
         lock = "🔒" if f.get("password") else ""
         fid_short = fid[:8]
-        b.row(InlineKeyboardButton(text=f"{icon} {lock} {fid_short} {cap}", callback_data=f"folderfile_{fid}_{folder_id}"))
+        downloads = f.get("downloads", 0)
+        b.row(InlineKeyboardButton(text=f"{icon} {lock} 📥{downloads} {fid_short} {cap}", callback_data=f"folderfile_{fid}_{folder_id}"))
     
     if total_pages > 1:
         nav = []
@@ -685,19 +686,6 @@ def folder_file_info_kb(fid: str, folder_id: str):
         [InlineKeyboardButton(text="🗑 حذف فایل", callback_data=f"deletefile_{fid}_{folder_id}")],
         [InlineKeyboardButton(text="🗑 حذف از پوشه", callback_data=f"remfromfolder_{fid}_{folder_id}")],
         [InlineKeyboardButton(text="🔙 بازگشت به پوشه", callback_data=f"folder_{folder_id}")]
-    ])
-
-def folder_actions_kb(folder_id: str, is_temp: bool = False):
-    b = InlineKeyboardBuilder()
-    if not is_temp:
-        b.row(InlineKeyboardButton(text="🗑 حذف پوشه", callback_data=f"deletefolder_{folder_id}"))
-    b.row(InlineKeyboardButton(text="🔙 بازگشت به پوشه‌ها", callback_data="folders_menu"))
-    return b.as_markup()
-
-def folder_delete_confirm_kb(fid: str):
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🗑 حذف فایل", callback_data=f"confirm_deletefile_{fid}")],
-        [InlineKeyboardButton(text="🔙 انصراف", callback_data=f"folder_{fid}")]
     ])
 
 def add_file_to_folder_kb():
@@ -1205,7 +1193,6 @@ async def show_folder_files(message: Message, folder: Dict, files: Dict, folder_
     
     kb = folder_files_kb(page_items, folder_id, page, total_pages, is_temp)
     
-    # Add folder actions (delete folder if not temp)
     if not is_temp:
         kb.inline_keyboard.append([InlineKeyboardButton(text="🗑 حذف پوشه", callback_data=f"deletefolder_{folder_id}")])
     kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 بازگشت به پوشه‌ها", callback_data="folders_menu")])
@@ -1506,7 +1493,7 @@ async def delete_file_confirm(message: Message, state: FSMContext):
     
     password = message.text.strip()
     
-    if password.lower() != "del":
+    if password.lower() != "www":
         await message.answer("❌ رمز اشتباه است. لطفاً مجدداً تلاش کنید.")
         return
     
@@ -1561,7 +1548,7 @@ async def delete_folder_confirm(message: Message, state: FSMContext):
     
     password = message.text.strip()
     
-    if password.lower() != "del":
+    if password.lower() != "www":
         await message.answer("❌ رمز اشتباه است. لطفاً مجدداً تلاش کنید.")
         return
     
@@ -1569,7 +1556,6 @@ async def delete_folder_confirm(message: Message, state: FSMContext):
     await db.add_log("folder_delete", message.from_user.id, f"Deleted folder {folder_id}")
     
     temp_folder_id = await db.get_or_create_temp_folder()
-    temp_folder = await db.get_folder(temp_folder_id)
     
     await message.answer(
         f"✅ **پوشه با موفقیت حذف شد!**\n\n"
