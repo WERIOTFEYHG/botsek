@@ -398,21 +398,17 @@ class JSONManager:
         return (await self._read(FOLDERS_FILE))["folders"]
 
     async def delete_folder(self, fid: str) -> Optional[str]:
-        """حذف پوشه و انتقال فایل‌ها به پوشه موقت. برمی‌گرداند آیدی پوشه موقت."""
         d = await self._read(FOLDERS_FILE)
         if fid not in d["folders"]:
             return None
         
-        # انتقال فایل‌ها به پوشه موقت
         temp_folder_id = await self.get_or_create_temp_folder()
         files = await self.get_files_by_folder(fid)
         for file_id in files:
             await self.update_file_folder(file_id, temp_folder_id)
         
-        # آپدیت شمارنده پوشه موقت
         await self.update_folder_file_count(temp_folder_id)
         
-        # حذف پوشه
         del d["folders"][fid]
         await self._write(FOLDERS_FILE, d)
         
@@ -1061,14 +1057,24 @@ async def menu_upload(message: Message, state: FSMContext):
 @router.callback_query(F.data == "create_folder_from_upload")
 async def create_folder_from_upload(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
+    await state.clear()
     await state.set_state(FolderState.waiting_name)
     await state.update_data(from_upload=True)
     await callback.message.edit_text(
         "📁 <b>ایجاد پوشه جدید</b>\n\n"
         "لطفاً نام پوشه را وارد کنید:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 انصراف", callback_data="panel")]
+            [InlineKeyboardButton(text="🔙 انصراف", callback_data="cancel_create_folder")]
         ])
+    )
+
+@router.callback_query(F.data == "cancel_create_folder")
+async def cancel_create_folder(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.clear()
+    await callback.message.edit_text(
+        "❌ عملیات لغو شد.",
+        reply_markup=await folders_main_kb()
     )
 
 @router.callback_query(F.data.startswith("upload_to_"))
@@ -1093,13 +1099,14 @@ async def upload_to_folder(callback: CallbackQuery, state: FSMContext):
 @router.callback_query(F.data == "create_folder")
 async def create_folder_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
+    await state.clear()
     await state.set_state(FolderState.waiting_name)
     await state.update_data(from_upload=False)
     await callback.message.edit_text(
         "📁 <b>ایجاد پوشه جدید</b>\n\n"
         "لطفاً نام پوشه را وارد کنید:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 انصراف", callback_data="folders_menu")]
+            [InlineKeyboardButton(text="🔙 انصراف", callback_data="cancel_create_folder")]
         ])
     )
 
@@ -1203,9 +1210,6 @@ async def show_folder_files(message: Message, folder: Dict, files: Dict, folder_
     
     if not is_temp:
         kb.inline_keyboard.append([InlineKeyboardButton(text="🗑 حذف پوشه", callback_data=f"deletefolder_{folder_id}")])
-    
-    # حذف دکمه برگشت تکراری - چون folder_files_kb خودش دکمه برگشت دارد
-    # دیگر دکمه برگشت اضافه نمی‌کنیم
     
     if isinstance(message, CallbackQuery):
         await message.message.edit_text(txt, reply_markup=kb)
@@ -1795,7 +1799,7 @@ async def menu_admins_vip(message: Message):
             txt += f"{display}\n"
     else:
         txt += "هیچ ادمینی نیست\n"
-    txt += "\n➖➖➖➖➖➖➖➖➖➖\n\n<b>VIP:</b>\n\n"
+    txt += "\n\n<b>VIP:</b>\n\n"
     if vips:
         for vid, v in vips.items():
             uname = v.get('username', '')
@@ -1818,7 +1822,7 @@ async def admins_menu_cb(callback: CallbackQuery):
             txt += f"{display}\n"
     else:
         txt += "هیچ ادمینی نیست\n"
-    txt += "\n➖➖➖➖➖➖➖➖➖➖\n\n<b>VIP:</b>\n\n"
+    txt += "\n\n<b>VIP:</b>\n\n"
     if vips:
         for vid, v in vips.items():
             uname = v.get('username', '')
@@ -2076,9 +2080,7 @@ async def show_stats_message(message: Message, edit_mode: bool = False):
     stats = await db.get_enhanced_stats()
     now = datetime.now()
     lines = [
-        "═══════════════════════",
-        "  📊 آمار ربات",
-        "═══════════════════════",
+        "📊 آمار ربات",
         "",
         f"👤 کل کاربران: {format_number(stats['total_users'])}",
         f"🟢 کاربران فعال: {format_number(stats['active_users'])}",
@@ -2086,7 +2088,6 @@ async def show_stats_message(message: Message, edit_mode: bool = False):
         f"📥 کل دانلودها: {format_number(stats['total_downloads'])}",
         f"👁 مجموع بازدیدها: {format_number(stats['total_views'])}",
         "",
-        "═══════════════════════",
         f"📅 {now.strftime('%Y/%m/%d')}  ⏰ {now.strftime('%H:%M:%S')}"
     ]
     table = "<pre>\n" + "\n".join(lines) + "\n</pre>"
@@ -2113,7 +2114,7 @@ async def force_join_stats_handler(callback: CallbackQuery):
             txt += f"🔗 چنل {i} ({safe_html(ch)}): {format_number(count)} عضو\n"
         except:
             txt += f"🔗 چنل {i} ({safe_html(ch)}): ❌ دسترسی ندارم\n"
-    txt += f"\n➖➖➖➖➖➖➖➖➖➖➖➖➖\n\n📌 <b>مجموع اعضای یکتا:</b> {format_number(total_members)}\n📅 بروزرسانی: {datetime.now().strftime('%H:%M:%S')}"
+    txt += f"\n📌 <b>مجموع اعضای یکتا:</b> {format_number(total_members)}\n📅 بروزرسانی: {datetime.now().strftime('%H:%M:%S')}"
     await callback.message.edit_text(txt, reply_markup=force_join_stats_kb())
 
 @router.message(F.text == "👥 کاربران")
@@ -2204,10 +2205,14 @@ async def user_info_handler(callback: CallbackQuery):
     banned_status = "🚫 مسدود" if u.get("banned") else "✅ آزاد"
     joined = u.get("joined", "")[:10].replace("-", "/") if u.get("joined") else "نامشخص"
     txt = (
-        f"╭━━━━━━━━━━━━━━━━━━━━━━━╮\n│   👤 اطلاعات کاربر      │\n╰━━━━━━━━━━━━━━━━━━━━━━━╯\n\n"
-        f"🆔 آیدی: <code>{uid}</code>\n👤 نام: {safe_html(u.get('name', 'نامشخص'))}\n"
-        f"📎 یوزرنیم: @{safe_html(u.get('username', 'ندارد'))}\n📅 تاریخ عضویت: {joined}\n"
-        f"📥 تعداد دانلود: {u.get('downloads', 0)}\n👁 تعداد بازدید: {u.get('views', 0)}\n🚫 وضعیت: {banned_status}"
+        f"👤 اطلاعات کاربر\n\n"
+        f"🆔 آیدی: <code>{uid}</code>\n"
+        f"👤 نام: {safe_html(u.get('name', 'نامشخص'))}\n"
+        f"📎 یوزرنیم: @{safe_html(u.get('username', 'ندارد'))}\n"
+        f"📅 تاریخ عضویت: {joined}\n"
+        f"📥 تعداد دانلود: {u.get('downloads', 0)}\n"
+        f"👁 تعداد بازدید: {u.get('views', 0)}\n"
+        f"🚫 وضعیت: {banned_status}"
     )
     await callback.message.edit_text(txt, reply_markup=user_info_kb(uid, u.get("banned", False)))
 
@@ -2242,10 +2247,14 @@ async def user_search_result(message: Message, state: FSMContext):
             banned_status = "🚫 مسدود" if u.get("banned") else "✅ آزاد"
             joined = u.get("joined", "")[:10].replace("-", "/") if u.get("joined") else "نامشخص"
             txt = (
-                f"╭━━━━━━━━━━━━━━━━━━━━━━━╮\n│   👤 اطلاعات کاربر      │\n╰━━━━━━━━━━━━━━━━━━━━━━━╯\n\n"
-                f"🆔 آیدی: <code>{uid}</code>\n👤 نام: {safe_html(u.get('name', 'نامشخص'))}\n"
-                f"📎 یوزرنیم: @{safe_html(u.get('username', 'ندارد'))}\n📅 تاریخ عضویت: {joined}\n"
-                f"📥 تعداد دانلود: {u.get('downloads', 0)}\n👁 تعداد بازدید: {u.get('views', 0)}\n🚫 وضعیت: {banned_status}"
+                f"👤 اطلاعات کاربر\n\n"
+                f"🆔 آیدی: <code>{uid}</code>\n"
+                f"👤 نام: {safe_html(u.get('name', 'نامشخص'))}\n"
+                f"📎 یوزرنیم: @{safe_html(u.get('username', 'ندارد'))}\n"
+                f"📅 تاریخ عضویت: {joined}\n"
+                f"📥 تعداد دانلود: {u.get('downloads', 0)}\n"
+                f"👁 تعداد بازدید: {u.get('views', 0)}\n"
+                f"🚫 وضعیت: {banned_status}"
             )
             await message.answer(txt, reply_markup=user_info_kb(uid, u.get("banned", False)))
             await state.clear()
