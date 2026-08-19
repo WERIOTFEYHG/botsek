@@ -397,18 +397,26 @@ class JSONManager:
     async def get_all_folders(self) -> Dict:
         return (await self._read(FOLDERS_FILE))["folders"]
 
-    async def delete_folder(self, fid: str) -> bool:
+    async def delete_folder(self, fid: str) -> Optional[str]:
+        """حذف پوشه و انتقال فایل‌ها به پوشه موقت. برمی‌گرداند آیدی پوشه موقت."""
         d = await self._read(FOLDERS_FILE)
-        if fid in d["folders"]:
-            files = await self.get_files_by_folder(fid)
-            temp_folder_id = await self.get_or_create_temp_folder()
-            for file_id in files:
-                await self.update_file_folder(file_id, temp_folder_id)
-            await self.update_folder_file_count(temp_folder_id)
-            del d["folders"][fid]
-            await self._write(FOLDERS_FILE, d)
-            return True
-        return False
+        if fid not in d["folders"]:
+            return None
+        
+        # انتقال فایل‌ها به پوشه موقت
+        temp_folder_id = await self.get_or_create_temp_folder()
+        files = await self.get_files_by_folder(fid)
+        for file_id in files:
+            await self.update_file_folder(file_id, temp_folder_id)
+        
+        # آپدیت شمارنده پوشه موقت
+        await self.update_folder_file_count(temp_folder_id)
+        
+        # حذف پوشه
+        del d["folders"][fid]
+        await self._write(FOLDERS_FILE, d)
+        
+        return temp_folder_id
 
     async def get_or_create_temp_folder(self) -> str:
         folders = await self.get_all_folders()
@@ -1045,7 +1053,7 @@ async def menu_upload(message: Message, state: FSMContext):
     b.row(InlineKeyboardButton(text="🔙 انصراف", callback_data="panel"))
     
     await message.answer(
-        "📤 **آپلود فایل جدید**\n\n"
+        "📤 <b>آپلود فایل جدید</b>\n\n"
         "یک پوشه را انتخاب کنید یا پوشه جدید بسازید:",
         reply_markup=b.as_markup()
     )
@@ -1056,7 +1064,7 @@ async def create_folder_from_upload(callback: CallbackQuery, state: FSMContext):
     await state.set_state(FolderState.waiting_name)
     await state.update_data(from_upload=True)
     await callback.message.edit_text(
-        "📁 **ایجاد پوشه جدید**\n\n"
+        "📁 <b>ایجاد پوشه جدید</b>\n\n"
         "لطفاً نام پوشه را وارد کنید:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 انصراف", callback_data="panel")]
@@ -1077,7 +1085,7 @@ async def upload_to_folder(callback: CallbackQuery, state: FSMContext):
     await state.set_state(UploadState.waiting)
     
     await callback.message.edit_text(
-        f"📤 **آپلود فایل به پوشه: {safe_html(folder.get('name', 'بدون نام'))}**\n\n"
+        f"📤 <b>آپلود فایل به پوشه: {safe_html(folder.get('name', 'بدون نام'))}</b>\n\n"
         "لطفاً فایل خود را ارسال کنید.",
         reply_markup=back_inline("panel")
     )
@@ -1088,7 +1096,7 @@ async def create_folder_start(callback: CallbackQuery, state: FSMContext):
     await state.set_state(FolderState.waiting_name)
     await state.update_data(from_upload=False)
     await callback.message.edit_text(
-        "📁 **ایجاد پوشه جدید**\n\n"
+        "📁 <b>ایجاد پوشه جدید</b>\n\n"
         "لطفاً نام پوشه را وارد کنید:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="🔙 انصراف", callback_data="folders_menu")]
@@ -1118,7 +1126,7 @@ async def create_folder_save(message: Message, state: FSMContext):
         await state.update_data(upload_folder=folder_id)
         await state.set_state(UploadState.waiting)
         await message.answer(
-            f"✅ **پوشه با موفقیت ساخته شد!**\n\n"
+            f"✅ <b>پوشه با موفقیت ساخته شد!</b>\n\n"
             f"📁 نام: {safe_html(name)}\n"
             f"🆔 شناسه: <code>{folder_id}</code>\n\n"
             f"📤 حالا فایل خود را ارسال کنید:",
@@ -1126,7 +1134,7 @@ async def create_folder_save(message: Message, state: FSMContext):
         )
     else:
         await message.answer(
-            f"✅ **پوشه با موفقیت ساخته شد!**\n\n"
+            f"✅ <b>پوشه با موفقیت ساخته شد!</b>\n\n"
             f"📁 نام: {safe_html(name)}\n"
             f"🆔 شناسه: <code>{folder_id}</code>",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -1144,7 +1152,7 @@ async def folders_menu(callback: CallbackQuery):
     total_folders = len(folders)
     total_files = len(files)
     
-    txt = f"📂 **مدیریت فایل‌ها و پوشه‌ها**\n\n📁 تعداد پوشه‌ها: {total_folders}\n📄 تعداد فایل‌ها: {total_files}"
+    txt = f"📂 <b>مدیریت فایل‌ها و پوشه‌ها</b>\n\n📁 تعداد پوشه‌ها: {total_folders}\n📄 تعداد فایل‌ها: {total_files}"
     
     await callback.message.edit_text(txt, reply_markup=await folders_main_kb())
 
@@ -1157,7 +1165,7 @@ async def menu_files(message: Message):
     total_folders = len(folders)
     total_files = len(files)
     
-    txt = f"📂 **مدیریت فایل‌ها و پوشه‌ها**\n\n📁 تعداد پوشه‌ها: {total_folders}\n📄 تعداد فایل‌ها: {total_files}"
+    txt = f"📂 <b>مدیریت فایل‌ها و پوشه‌ها</b>\n\n📁 تعداد پوشه‌ها: {total_folders}\n📄 تعداد فایل‌ها: {total_files}"
     
     await message.answer(txt, reply_markup=await folders_main_kb())
 
@@ -1185,7 +1193,7 @@ async def show_folder_files(message: Message, folder: Dict, files: Dict, folder_
     file_count = len(items)
     is_temp = (folder_name == TEMP_FOLDER_NAME)
     
-    txt = f"📂 **{safe_html(folder_name)}**\n\n"
+    txt = f"📂 <b>{safe_html(folder_name)}</b>\n\n"
     txt += f"📄 تعداد فایل‌ها: {file_count}\n"
     txt += f"📅 ایجاد: {folder.get('created', '')[:10]}"
     
@@ -1195,7 +1203,9 @@ async def show_folder_files(message: Message, folder: Dict, files: Dict, folder_
     
     if not is_temp:
         kb.inline_keyboard.append([InlineKeyboardButton(text="🗑 حذف پوشه", callback_data=f"deletefolder_{folder_id}")])
-    kb.inline_keyboard.append([InlineKeyboardButton(text="🔙 بازگشت به پوشه‌ها", callback_data="folders_menu")])
+    
+    # حذف دکمه برگشت تکراری - چون folder_files_kb خودش دکمه برگشت دارد
+    # دیگر دکمه برگشت اضافه نمی‌کنیم
     
     if isinstance(message, CallbackQuery):
         await message.message.edit_text(txt, reply_markup=kb)
@@ -1238,7 +1248,7 @@ async def view_folder_file(callback: CallbackQuery):
     link = f"https://t.me/{bot.username}?start={fid}"
     fid_short = fid[:8]
     
-    txt = f"{icon} **مشخصات فایل**\n\n"
+    txt = f"{icon} <b>مشخصات فایل</b>\n\n"
     txt += f"🆔 شناسه: {fid_short}\n"
     txt += f"📝 کپشن: {safe_html(f.get('caption', 'بدون کپشن'))}\n"
     txt += f"📂 نوع: {f.get('type', 'ناشناس')}\n"
@@ -1262,7 +1272,7 @@ async def add_file_to_folder_start(callback: CallbackQuery, state: FSMContext):
     
     await state.update_data(add_folder=folder_id)
     await callback.message.edit_text(
-        f"📤 **اضافه کردن فایل به {safe_html(folder.get('name', 'بدون نام'))}**\n\n"
+        f"📤 <b>اضافه کردن فایل به {safe_html(folder.get('name', 'بدون نام'))}</b>\n\n"
         "لطفاً یکی از گزینه‌های زیر را انتخاب کنید:",
         reply_markup=add_file_to_folder_kb()
     )
@@ -1272,7 +1282,7 @@ async def add_new_file_to_folder(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(FolderState.waiting_file)
     await callback.message.edit_text(
-        "📤 **ارسال فایل جدید**\n\n"
+        "📤 <b>ارسال فایل جدید</b>\n\n"
         "لطفاً فایل خود را ارسال کنید.",
         reply_markup=back_inline(f"addfile_{(await state.get_data()).get('add_folder', '')}")
     )
@@ -1332,7 +1342,7 @@ async def receive_new_file_for_folder(message: Message, state: FSMContext):
     link = f"https://t.me/{bot.username}?start={fid}"
     
     await message.answer(
-        f"✅ **فایل با موفقیت به پوشه اضافه شد!**\n\n"
+        f"✅ <b>فایل با موفقیت به پوشه اضافه شد!</b>\n\n"
         f"📁 پوشه: {safe_html(folder.get('name', 'بدون نام'))}\n"
         f"🆔 شناسه: {fid}\n"
         f"🔗 لینک استارت:\n{link}",
@@ -1349,9 +1359,9 @@ async def add_existing_file_to_folder(callback: CallbackQuery, state: FSMContext
     await callback.answer()
     await state.set_state(FolderState.waiting_link)
     await callback.message.edit_text(
-        "🔗 **اضافه کردن فایل موجود**\n\n"
+        "🔗 <b>اضافه کردن فایل موجود</b>\n\n"
         "لطفاً لینک استارت فایل را ارسال کنید:\n"
-        "مثال: `/start abc123` یا `https://t.me/bot?start=abc123`\n\n"
+        "مثال: <code>/start abc123</code> یا <code>https://t.me/bot?start=abc123</code>\n\n"
         "⚠️ اگر فایل در پوشه دیگری باشد، به این پوشه منتقل می‌شود.",
         reply_markup=back_inline(f"addfile_{(await state.get_data()).get('add_folder', '')}")
     )
@@ -1415,7 +1425,7 @@ async def receive_existing_file_link(message: Message, state: FSMContext):
     link = f"https://t.me/{bot.username}?start={fid}"
     
     await message.answer(
-        f"✅ **فایل با موفقیت منتقل شد!**\n\n"
+        f"✅ <b>فایل با موفقیت منتقل شد!</b>\n\n"
         f"📁 پوشه جدید: {safe_html(folder.get('name', 'بدون نام'))}\n"
         f"📁 پوشه قبلی: {safe_html(old_folder_name)}\n"
         f"🆔 شناسه: {fid}\n"
@@ -1442,7 +1452,7 @@ async def remove_from_folder_confirm(callback: CallbackQuery):
     folder_id = parts[1]
     
     await callback.message.edit_text(
-        "⚠️ **آیا از حذف این فایل از پوشه اطمینان دارید؟**\n\n"
+        "⚠️ <b>آیا از حذف این فایل از پوشه اطمینان دارید؟</b>\n\n"
         "فایل از پوشه حذف می‌شود اما از ربات پاک نمی‌شود.",
         reply_markup=confirm_remove_from_folder_kb(fid, folder_id)
     )
@@ -1485,30 +1495,68 @@ async def delete_file_confirm(message: Message, state: FSMContext):
     data = await state.get_data()
     fid = data.get("del_fid")
     folder_id = data.get("del_folder")
+    del_folder_only = data.get("del_folder_only")
+    del_all_folder = data.get("del_all_folder")
     
-    if not fid or not folder_id:
-        await message.answer("❌ خطا در شناسایی فایل.")
+    if fid and folder_id:
+        password = message.text.strip()
+        
+        if password.lower() != "www":
+            await message.answer("❌ رمز اشتباه است. لطفاً مجدداً تلاش کنید.")
+            return
+        
+        await db.delete_file(fid)
+        await db.update_folder_file_count(folder_id)
+        await db.add_log("file_delete", message.from_user.id, f"Deleted file {fid} from folder {folder_id}")
+        
+        await message.answer(
+            "✅ فایل با موفقیت حذف شد.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📂 بازگشت به پوشه", callback_data=f"folder_{folder_id}")],
+                [InlineKeyboardButton(text="🔙 پوشه‌ها", callback_data="folders_menu")]
+            ])
+        )
         await state.clear()
-        return
-    
-    password = message.text.strip()
-    
-    if password.lower() != "www":
-        await message.answer("❌ رمز اشتباه است. لطفاً مجدداً تلاش کنید.")
-        return
-    
-    await db.delete_file(fid)
-    await db.update_folder_file_count(folder_id)
-    await db.add_log("file_delete", message.from_user.id, f"Deleted file {fid} from folder {folder_id}")
-    
-    await message.answer(
-        "✅ فایل با موفقیت حذف شد.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📂 بازگشت به پوشه", callback_data=f"folder_{folder_id}")],
-            [InlineKeyboardButton(text="🔙 پوشه‌ها", callback_data="folders_menu")]
-        ])
-    )
-    await state.clear()
+    elif del_folder_only:
+        password = message.text.strip()
+        
+        if password.lower() != "www":
+            await message.answer("❌ رمز اشتباه است. لطفاً مجدداً تلاش کنید.")
+            return
+        
+        temp_folder_id = await db.delete_folder(del_folder_only)
+        
+        if temp_folder_id:
+            await db.add_log("folder_delete", message.from_user.id, f"Deleted folder {del_folder_only}")
+            
+            await message.answer(
+                f"✅ <b>پوشه با موفقیت حذف شد!</b>\n\n"
+                f"📁 تمام فایل‌ها به پوشه فایل‌های موقت منتقل شدند.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="📂 مشاهده فایل‌های موقت", callback_data=f"folder_{temp_folder_id}")],
+                    [InlineKeyboardButton(text="🔙 پوشه‌ها", callback_data="folders_menu")]
+                ])
+            )
+            await state.clear()
+    elif del_all_folder:
+        password = message.text.strip()
+        
+        if password.lower() != "www":
+            await message.answer("❌ رمز اشتباه است. لطفاً مجدداً تلاش کنید.")
+            return
+        
+        deleted = await db.delete_all_files_in_folder(del_all_folder)
+        await db.update_folder_file_count(del_all_folder)
+        await db.add_log("delete_all_files", message.from_user.id, f"Deleted all {deleted} files from folder {del_all_folder}")
+        
+        await message.answer(
+            f"✅ <b>{deleted} فایل با موفقیت حذف شدند.</b>",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📂 بازگشت به پوشه", callback_data=f"folder_{del_all_folder}")],
+                [InlineKeyboardButton(text="🔙 پوشه‌ها", callback_data="folders_menu")]
+            ])
+        )
+        await state.clear()
 
 @router.callback_query(F.data.startswith("deletefolder_"))
 async def delete_folder_start(callback: CallbackQuery, state: FSMContext):
@@ -1530,42 +1578,11 @@ async def delete_folder_start(callback: CallbackQuery, state: FSMContext):
     await state.update_data(del_folder_only=folder_id)
     await state.set_state(DeleteState.waiting_password)
     await callback.message.edit_text(
-        f"🗑 **حذف پوشه: {safe_html(folder.get('name', 'بدون نام'))}**\n\n"
+        f"🗑 <b>حذف پوشه: {safe_html(folder.get('name', 'بدون نام'))}</b>\n\n"
         "⚠️ تمام فایل‌های این پوشه به پوشه فایل‌های موقت منتقل می‌شوند.\n\n"
         "🔑 رمز حذف پوشه را وارد کنید:",
         reply_markup=back_inline("folders_menu")
     )
-
-@router.message(DeleteState.waiting_password)
-async def delete_folder_confirm(message: Message, state: FSMContext):
-    data = await state.get_data()
-    folder_id = data.get("del_folder_only")
-    
-    if not folder_id:
-        await message.answer("❌ خطا در شناسایی پوشه.")
-        await state.clear()
-        return
-    
-    password = message.text.strip()
-    
-    if password.lower() != "www":
-        await message.answer("❌ رمز اشتباه است. لطفاً مجدداً تلاش کنید.")
-        return
-    
-    await db.delete_folder(folder_id)
-    await db.add_log("folder_delete", message.from_user.id, f"Deleted folder {folder_id}")
-    
-    temp_folder_id = await db.get_or_create_temp_folder()
-    
-    await message.answer(
-        f"✅ **پوشه با موفقیت حذف شد!**\n\n"
-        f"📁 تمام فایل‌ها به پوشه فایل‌های موقت منتقل شدند.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📂 مشاهده فایل‌های موقت", callback_data=f"folder_{temp_folder_id}")],
-            [InlineKeyboardButton(text="🔙 پوشه‌ها", callback_data="folders_menu")]
-        ])
-    )
-    await state.clear()
 
 @router.callback_query(F.data.startswith("deleteallfiles_"))
 async def delete_all_files_start(callback: CallbackQuery, state: FSMContext):
@@ -1587,40 +1604,11 @@ async def delete_all_files_start(callback: CallbackQuery, state: FSMContext):
     await state.update_data(del_all_folder=folder_id)
     await state.set_state(DeleteState.waiting_password)
     await callback.message.edit_text(
-        f"🗑 **حذف تمامی فایل‌های داخل {safe_html(folder.get('name', 'بدون نام'))}**\n\n"
+        f"🗑 <b>حذف تمامی فایل‌های داخل {safe_html(folder.get('name', 'بدون نام'))}</b>\n\n"
         "⚠️ تمام فایل‌های داخل این پوشه به طور کامل حذف می‌شوند.\n\n"
         "🔑 رمز حذف تمامی فایل‌ها را وارد کنید:",
         reply_markup=back_inline(f"folder_{folder_id}")
     )
-
-@router.message(DeleteState.waiting_password)
-async def delete_all_files_confirm(message: Message, state: FSMContext):
-    data = await state.get_data()
-    folder_id = data.get("del_all_folder")
-    
-    if not folder_id:
-        await message.answer("❌ خطا در شناسایی پوشه.")
-        await state.clear()
-        return
-    
-    password = message.text.strip()
-    
-    if password.lower() != "www":
-        await message.answer("❌ رمز اشتباه است. لطفاً مجدداً تلاش کنید.")
-        return
-    
-    deleted = await db.delete_all_files_in_folder(folder_id)
-    await db.update_folder_file_count(folder_id)
-    await db.add_log("delete_all_files", message.from_user.id, f"Deleted all {deleted} files from folder {folder_id}")
-    
-    await message.answer(
-        f"✅ **{deleted} فایل با موفقیت حذف شدند.**",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📂 بازگشت به پوشه", callback_data=f"folder_{folder_id}")],
-            [InlineKeyboardButton(text="🔙 پوشه‌ها", callback_data="folders_menu")]
-        ])
-    )
-    await state.clear()
 
 def files_kb(files: Dict, page: int = 0):
     b = InlineKeyboardBuilder()
@@ -1736,7 +1724,7 @@ async def set_pass_start(callback: CallbackQuery, state: FSMContext):
     if not f.get("password"):
         await callback.message.edit_text(
             "🔓 این فایل رمز ندارد.\nبرای تنظیم رمز، متن مورد نظر را وارد کنید.\n\n"
-            "💡 برای حذف رمز، عبارت `remove` را وارد کنید.",
+            "💡 برای حذف رمز، عبارت <code>remove</code> را وارد کنید.",
             reply_markup=back_inline(f"file_{fid}")
         )
         await state.update_data(edit_fid=fid)
@@ -1748,7 +1736,7 @@ async def set_pass_start(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(
         f"🔒 رمز فعلی: {f.get('password')}\n\n"
         "✏️ رمز جدید را وارد کنید:\n"
-        "💡 برای حذف رمز، عبارت `remove` را وارد کنید.",
+        "💡 برای حذف رمز، عبارت <code>remove</code> را وارد کنید.",
         reply_markup=back_inline(f"file_{fid}")
     )
 
@@ -1799,19 +1787,19 @@ async def menu_admins_vip(message: Message):
         return
     admins = await db.get_admins()
     vips = await db.get_vips()
-    txt = "👮 **مدیریت ادمین‌ها و VIP**\n\n**ADMIN:**\n\n"
+    txt = "👮 <b>مدیریت ادمین‌ها و VIP</b>\n\n<b>ADMIN:</b>\n\n"
     if admins:
         for aid, a in admins.items():
             uname = a.get('username', '')
-            display = f"@{uname}-admin" if uname else f"`{aid}`-admin"
+            display = f"@{uname}-admin" if uname else f"<code>{aid}</code>-admin"
             txt += f"{display}\n"
     else:
         txt += "هیچ ادمینی نیست\n"
-    txt += "\n➖➖➖➖➖➖➖➖➖➖\n\n**VIP:**\n\n"
+    txt += "\n➖➖➖➖➖➖➖➖➖➖\n\n<b>VIP:</b>\n\n"
     if vips:
         for vid, v in vips.items():
             uname = v.get('username', '')
-            display = f"@{uname}-vip" if uname else f"`{vid}`-vip"
+            display = f"@{uname}-vip" if uname else f"<code>{vid}</code>-vip"
             txt += f"{display}\n"
     else:
         txt += "هیچ VIP ای نیست\n"
@@ -1822,19 +1810,19 @@ async def admins_menu_cb(callback: CallbackQuery):
     await callback.answer()
     admins = await db.get_admins()
     vips = await db.get_vips()
-    txt = "👮 **مدیریت ادمین‌ها و VIP**\n\n**ADMIN:**\n\n"
+    txt = "👮 <b>مدیریت ادمین‌ها و VIP</b>\n\n<b>ADMIN:</b>\n\n"
     if admins:
         for aid, a in admins.items():
             uname = a.get('username', '')
-            display = f"@{uname}-admin" if uname else f"`{aid}`-admin"
+            display = f"@{uname}-admin" if uname else f"<code>{aid}</code>-admin"
             txt += f"{display}\n"
     else:
         txt += "هیچ ادمینی نیست\n"
-    txt += "\n➖➖➖➖➖➖➖➖➖➖\n\n**VIP:**\n\n"
+    txt += "\n➖➖➖➖➖➖➖➖➖➖\n\n<b>VIP:</b>\n\n"
     if vips:
         for vid, v in vips.items():
             uname = v.get('username', '')
-            display = f"@{uname}-vip" if uname else f"`{vid}`-vip"
+            display = f"@{uname}-vip" if uname else f"<code>{vid}</code>-vip"
             txt += f"{display}\n"
     else:
         txt += "هیچ VIP ای نیست\n"
@@ -1844,7 +1832,7 @@ async def admins_menu_cb(callback: CallbackQuery):
 async def add_admin_prompt(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(SettingsState.waiting_add_admin)
-    await callback.message.edit_text("👮 **افزودن ادمین**\n\n📌 آیدی عددی یا فوروارد:", reply_markup=back_inline("admins_menu"))
+    await callback.message.edit_text("👮 <b>افزودن ادمین</b>\n\n📌 آیدی عددی یا فوروارد:", reply_markup=back_inline("admins_menu"))
 
 @router.message(SettingsState.waiting_add_admin)
 async def save_admin(message: Message, state: FSMContext):
@@ -1866,7 +1854,7 @@ async def save_admin(message: Message, state: FSMContext):
 async def add_vip_prompt(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(SettingsState.waiting_add_vip)
-    await callback.message.edit_text("⭐ **افزودن VIP**\n\n📌 آیدی عددی یا فوروارد:", reply_markup=back_inline("admins_menu"))
+    await callback.message.edit_text("⭐ <b>افزودن VIP</b>\n\n📌 آیدی عددی یا فوروارد:", reply_markup=back_inline("admins_menu"))
 
 @router.message(SettingsState.waiting_add_vip)
 async def save_vip(message: Message, state: FSMContext):
@@ -1952,9 +1940,9 @@ async def toggle_bot_from_panel(message: Message):
     await db.add_log("toggle", message.from_user.id, f"Bot {'ON' if new_status else 'OFF'}")
     kb = await get_admin_panel_kb()
     if new_status:
-        await message.answer("🟢 **ربات روشن شد!**", reply_markup=kb)
+        await message.answer("🟢 <b>ربات روشن شد!</b>", reply_markup=kb)
     else:
-        await message.answer("🔴 **ربات خاموش شد!**", reply_markup=kb)
+        await message.answer("🔴 <b>ربات خاموش شد!</b>", reply_markup=kb)
 
 @router.callback_query(F.data == "toggle_forward_lock")
 async def toggle_forward_lock_handler(callback: CallbackQuery):
@@ -1964,9 +1952,9 @@ async def toggle_forward_lock_handler(callback: CallbackQuery):
     s = await db.get_settings()
     await callback.message.edit_text("⚙️ تنظیمات", reply_markup=settings_kb(s))
     if new_status:
-        await callback.message.answer("🔒 **قفل فوروارد فعال شد!**")
+        await callback.message.answer("🔒 <b>قفل فوروارد فعال شد!</b>")
     else:
-        await callback.message.answer("🔓 **قفل فوروارد غیرفعال شد!**")
+        await callback.message.answer("🔓 <b>قفل فوروارد غیرفعال شد!</b>")
 
 @router.message(UploadState.waiting)
 async def upload_receive(message: Message, state: FSMContext):
@@ -2052,7 +2040,7 @@ async def finalize_upload(message: Message, state: FSMContext, admin_id: int):
         if folder:
             folder_name = folder.get("name", "")
     
-    txt = f"✅ **آپلود موفق!**\n\n"
+    txt = f"✅ <b>آپلود موفق!</b>\n\n"
     txt += f"{icon} نوع: {data['file_type']}\n"
     txt += f"🆔 شناسه: <code>{fid}</code>\n"
     if folder_name:
@@ -2101,11 +2089,11 @@ async def show_stats_message(message: Message, edit_mode: bool = False):
         "═══════════════════════",
         f"📅 {now.strftime('%Y/%m/%d')}  ⏰ {now.strftime('%H:%M:%S')}"
     ]
-    table = "```\n" + "\n".join(lines) + "\n```"
+    table = "<pre>\n" + "\n".join(lines) + "\n</pre>"
     if edit_mode:
-        await message.edit_text(table, reply_markup=stats_kb(), parse_mode=ParseMode.MARKDOWN_V2)
+        await message.edit_text(table, reply_markup=stats_kb())
     else:
-        await message.answer(table, reply_markup=stats_kb(), parse_mode=ParseMode.MARKDOWN_V2)
+        await message.answer(table, reply_markup=stats_kb())
 
 @router.callback_query(F.data == "force_join_stats")
 async def force_join_stats_handler(callback: CallbackQuery):
@@ -2113,9 +2101,9 @@ async def force_join_stats_handler(callback: CallbackQuery):
     s = await db.get_settings()
     channels = s.get("force_join", [])
     if not channels:
-        await callback.message.edit_text("📊 **آمار عضویت اجباری**\n\n❌ هیچ چنلی تنظیم نشده است.", reply_markup=force_join_stats_kb())
+        await callback.message.edit_text("📊 <b>آمار عضویت اجباری</b>\n\n❌ هیچ چنلی تنظیم نشده است.", reply_markup=force_join_stats_kb())
         return
-    txt = "📊 **آمار عضویت اجباری**\n\n"
+    txt = "📊 <b>آمار عضویت اجباری</b>\n\n"
     total_members = 0
     bot = callback.bot
     for i, ch in enumerate(channels, 1):
@@ -2125,7 +2113,7 @@ async def force_join_stats_handler(callback: CallbackQuery):
             txt += f"🔗 چنل {i} ({safe_html(ch)}): {format_number(count)} عضو\n"
         except:
             txt += f"🔗 چنل {i} ({safe_html(ch)}): ❌ دسترسی ندارم\n"
-    txt += f"\n➖➖➖➖➖➖➖➖➖➖➖➖➖\n\n📌 **مجموع اعضای یکتا:** {format_number(total_members)}\n📅 بروزرسانی: {datetime.now().strftime('%H:%M:%S')}"
+    txt += f"\n➖➖➖➖➖➖➖➖➖➖➖➖➖\n\n📌 <b>مجموع اعضای یکتا:</b> {format_number(total_members)}\n📅 بروزرسانی: {datetime.now().strftime('%H:%M:%S')}"
     await callback.message.edit_text(txt, reply_markup=force_join_stats_kb())
 
 @router.message(F.text == "👥 کاربران")
@@ -2144,7 +2132,7 @@ async def show_users_main_menu(message: Message):
     total = len(users)
     banned_users = await db.get_banned_users()
     banned = len(banned_users)
-    txt = f"👥 **مدیریت کاربران**\n\n👤 کل کاربران: {format_number(total)}\n🚫 کاربران مسدود: {format_number(banned)}"
+    txt = f"👥 <b>مدیریت کاربران</b>\n\n👤 کل کاربران: {format_number(total)}\n🚫 کاربران مسدود: {format_number(banned)}"
     if isinstance(message, CallbackQuery):
         await message.message.edit_text(txt, reply_markup=users_main_menu_kb(total, banned))
     else:
@@ -2236,7 +2224,7 @@ async def user_search_start(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await state.set_state(SettingsState.waiting_search_user)
     await callback.message.edit_text(
-        "🔍 **جستجوی کاربران**\n\n"
+        "🔍 <b>جستجوی کاربران</b>\n\n"
         "📌 لطفاً یکی از موارد زیر را وارد کنید:\n"
         "• 🔢 آیدی عددی\n"
         "• 📎 یوزرنیم\n"
@@ -2275,7 +2263,7 @@ async def chat_start(callback: CallbackQuery, state: FSMContext):
     await db.start_chat(callback.from_user.id, uid)
     await state.set_state(ChatState.waiting)
     await callback.message.edit_text(
-        f"💬 **حالت چت با کاربر {safe_html(u.get('name', 'کاربر'))} (@{safe_html(u.get('username', 'ندارد'))}) فعال شد.**\n\n"
+        f"💬 <b>حالت چت با کاربر {safe_html(u.get('name', 'کاربر'))} (@{safe_html(u.get('username', 'ندارد'))}) فعال شد.</b>\n\n"
         f"📝 لطفاً پیام خود را ارسال کنید.\nپیام شما مستقیماً برای این کاربر ارسال می‌شود.\nپاسخ کاربر نیز به شما منتقل می‌شود.",
         reply_markup=chat_active_kb()
     )
@@ -2298,7 +2286,7 @@ async def chat_end(callback: CallbackQuery, state: FSMContext):
     await callback.answer()
     await db.end_chat(callback.from_user.id)
     await state.clear()
-    await callback.message.edit_text("🔴 **گفتگو پایان یافت.**", reply_markup=await get_admin_panel_kb())
+    await callback.message.edit_text("🔴 <b>گفتگو پایان یافت.</b>", reply_markup=await get_admin_panel_kb())
 
 @router.message(~F.text.startswith("/"), ~F.text.startswith("📤"), ~F.text.startswith("📂"), ~F.text.startswith("📊"), ~F.text.startswith("📢"), ~F.text.startswith("⚙️"), ~F.text.startswith("👥"), ~F.text.startswith("👮"), ~F.text.startswith("📜"), ~F.text.startswith("🔗"), ~F.text.startswith("💾"), ~F.text.contains("ربات فعال"), ~F.text.contains("ربات خاموش"))
 async def handle_incoming_message(message: Message):
