@@ -1,7 +1,7 @@
+```python
 """
-Telegram File Uploader Bot - v12.3 FINAL
+Telegram File Uploader Bot - v13.0 WITH FOLDER SYSTEM
 Aiogram 3.x | JSON Storage | Railway Ready
-ALL SYNTAX ERRORS FIXED | PROPER INDENTATION
 """
 
 import asyncio
@@ -41,6 +41,7 @@ FILES_FILE = "files.json"
 ADMINS_FILE = "admins.json"
 SETTINGS_FILE = "settings.json"
 LOGS_FILE = "logs.json"
+FOLDERS_FILE = "folders.json"
 
 # ==================== LOGGER ====================
 logging.basicConfig(
@@ -89,7 +90,7 @@ def get_default_texts():
 class JSONManager:
     def __init__(self):
         self.locks = {}
-        for f in [USERS_FILE, FILES_FILE, ADMINS_FILE, SETTINGS_FILE, LOGS_FILE]:
+        for f in [USERS_FILE, FILES_FILE, ADMINS_FILE, SETTINGS_FILE, LOGS_FILE, FOLDERS_FILE]:
             self.locks[f] = asyncio.Lock()
 
     def init_files(self):
@@ -102,7 +103,8 @@ class JSONManager:
                 "bot_active": True, "forward_lock": False,
                 "texts": get_default_texts(), "chat_sessions": {}
             },
-            LOGS_FILE: {"logs": []}
+            LOGS_FILE: {"logs": []},
+            FOLDERS_FILE: {"folders": {}}
         }
         for fn, data in defaults.items():
             if not os.path.exists(fn):
@@ -268,10 +270,23 @@ class JSONManager:
                 return (None, None, None, f"❌ کاربر با آیدی {uid} پیدا نشد.")
         return (None, None, None, "❌ آیدی عددی یا فوروارد پیام.")
 
+    # ==================== FILE MANAGEMENT ====================
     async def add_file(self, data: Dict) -> str:
         d = await self._read(FILES_FILE)
         fid = data["id"]
-        d["files"][fid] = {"id": fid, "file_id": data["file_id"], "type": data["type"], "caption": data.get("caption", ""), "file_name": data.get("file_name", ""), "password": data.get("password", ""), "date": datetime.now().isoformat(), "downloads": 0, "views": 0, "admin": data["admin"]}
+        d["files"][fid] = {
+            "id": fid, 
+            "file_id": data["file_id"], 
+            "type": data["type"], 
+            "caption": data.get("caption", ""), 
+            "file_name": data.get("file_name", ""), 
+            "password": data.get("password", ""), 
+            "date": datetime.now().isoformat(), 
+            "downloads": 0, 
+            "views": 0, 
+            "admin": data["admin"],
+            "folder": data.get("folder", "")
+        }
         await self._write(FILES_FILE, d)
         return fid
 
@@ -310,6 +325,55 @@ class JSONManager:
         if fid in d["files"]:
             d["files"][fid]["password"] = password
             await self._write(FILES_FILE, d)
+
+    async def update_file_folder(self, fid: str, folder: str):
+        d = await self._read(FILES_FILE)
+        if fid in d["files"]:
+            d["files"][fid]["folder"] = folder
+            await self._write(FILES_FILE, d)
+
+    async def get_files_by_folder(self, folder: str) -> Dict:
+        d = await self._read(FILES_FILE)
+        return {fid: f for fid, f in d["files"].items() if f.get("folder", "") == folder}
+
+    # ==================== FOLDER MANAGEMENT ====================
+    async def add_folder(self, name: str, admin_id: int) -> str:
+        d = await self._read(FOLDERS_FILE)
+        fid = str(uuid.uuid4())[:8]
+        d["folders"][fid] = {
+            "id": fid,
+            "name": name,
+            "admin": admin_id,
+            "created": datetime.now().isoformat(),
+            "file_count": 0
+        }
+        await self._write(FOLDERS_FILE, d)
+        return fid
+
+    async def get_folder(self, fid: str) -> Optional[Dict]:
+        return (await self._read(FOLDERS_FILE))["folders"].get(fid)
+
+    async def get_all_folders(self) -> Dict:
+        return (await self._read(FOLDERS_FILE))["folders"]
+
+    async def delete_folder(self, fid: str) -> bool:
+        d = await self._read(FOLDERS_FILE)
+        if fid in d["folders"]:
+            # Move files to unassigned
+            files = await self.get_files_by_folder(fid)
+            for file_id in files:
+                await self.update_file_folder(file_id, "")
+            del d["folders"][fid]
+            await self._write(FOLDERS_FILE, d)
+            return True
+        return False
+
+    async def update_folder_file_count(self, fid: str):
+        d = await self._read(FOLDERS_FILE)
+        if fid in d["folders"]:
+            files = await self.get_files_by_folder(fid)
+            d["folders"][fid]["file_count"] = len(files)
+            await self._write(FOLDERS_FILE, d)
 
     async def get_enhanced_stats(self) -> Dict:
         users = await self._read(USERS_FILE)
@@ -456,29 +520,71 @@ def settings_kb(settings: Dict):
 def stats_kb(): return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔄 بروزرسانی آمار", callback_data="refresh_stats")], [InlineKeyboardButton(text="📊 آمار عضویت اجباری", callback_data="force_join_stats")], [InlineKeyboardButton(text="🔙 بازگشت به منو", callback_data="panel")]])
 def force_join_stats_kb(): return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🔙 بازگشت به آمار", callback_data="show_stats")]])
 
-def files_kb(files: Dict, page: int = 0):
+# ==================== FOLDER KEYBOARDS ====================
+async def folders_main_kb():
+    folders = await db.get_all_folders()
+    files = await db.get_all_files()
+    total_folders = len(folders)
+    total_files = len(files)
+    
     b = InlineKeyboardBuilder()
-    items = list(files.items())
-    per_page = 6
-    total_pages = max(1, (len(items) + per_page - 1) // per_page)
-    start = page * per_page
-    type_icons = {"photo": "🖼", "video": "🎬", "audio": "🎵", "voice": "🎤", "animation": "✨", "sticker": "🏷", "document": "📄"}
-    for fid, f in items[start:start+per_page]:
-        cap = f.get("caption", "بدون کپشن")[:25]
-        icon = type_icons.get(f.get("type", "document"), "📁")
-        lock = "🔒" if f.get("password") else ""
-        b.row(InlineKeyboardButton(text=f"{icon} {lock} {cap} | 📥{f['downloads']}", callback_data=f"file_{fid}"))
-    if total_pages > 1:
-        nav = []
-        if page > 0: nav.append(InlineKeyboardButton(text="◀️", callback_data=f"files_pg_{page-1}"))
-        nav.append(InlineKeyboardButton(text=f"{page+1}/{total_pages}", callback_data="noop"))
-        if page < total_pages - 1: nav.append(InlineKeyboardButton(text="▶️", callback_data=f"files_pg_{page+1}"))
-        b.row(*nav)
-    b.row(InlineKeyboardButton(text="🔙 بازگشت", callback_data="panel"))
+    b.row(InlineKeyboardButton(text=f"📁 تعداد پوشه‌ها: {total_folders}", callback_data="noop"))
+    b.row(InlineKeyboardButton(text=f"📄 تعداد فایل‌ها: {total_files}", callback_data="noop"))
+    b.row(InlineKeyboardButton(text="➕ ایجاد پوشه جدید", callback_data="create_folder"))
+    
+    if folders:
+        for fid, folder in folders.items():
+            name = folder.get("name", "بدون نام")[:25]
+            count = folder.get("file_count", 0)
+            b.row(InlineKeyboardButton(text=f"📂 {name} ({count})", callback_data=f"folder_{fid}"))
+    
+    b.row(InlineKeyboardButton(text="🔙 بازگشت به منو", callback_data="panel"))
     return b.as_markup()
 
-def file_actions_kb(fid: str): return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📥 دریافت", callback_data=f"dl_{fid}"), InlineKeyboardButton(text="🔗 لینک", callback_data=f"link_{fid}")], [InlineKeyboardButton(text="✏️ کپشن", callback_data=f"editcap_{fid}"), InlineKeyboardButton(text="🔒 رمز", callback_data=f"setpass_{fid}")], [InlineKeyboardButton(text="🗑 حذف", callback_data=f"del_{fid}")], [InlineKeyboardButton(text="🔙 فایل‌ها", callback_data="files_list")]])
-def confirm_delete_kb(fid: str): return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ بله", callback_data=f"delyes_{fid}"), InlineKeyboardButton(text="❌ خیر", callback_data=f"file_{fid}")]])
+def folder_files_kb(files: List[tuple], folder_id: str, page: int, total_pages: int):
+    b = InlineKeyboardBuilder()
+    
+    # Add file button at top
+    b.row(InlineKeyboardButton(text="➕ اضافه کردن فایل", callback_data=f"addfile_{folder_id}"))
+    
+    type_icons = {"photo": "🖼", "video": "🎬", "audio": "🎵", "voice": "🎤", "animation": "✨", "sticker": "🏷", "document": "📄"}
+    
+    for fid, f in files:
+        cap = f.get("caption", "بدون کپشن")[:20]
+        icon = type_icons.get(f.get("type", "document"), "📁")
+        lock = "🔒" if f.get("password") else ""
+        b.row(InlineKeyboardButton(text=f"{icon} {lock} {cap}", callback_data=f"folderfile_{fid}_{folder_id}"))
+    
+    if total_pages > 1:
+        nav = []
+        if page > 0: nav.append(InlineKeyboardButton(text="◀️ قبلی", callback_data=f"folderpg_{folder_id}_{page-1}"))
+        nav.append(InlineKeyboardButton(text=f"📄 {page+1}/{total_pages}", callback_data="noop"))
+        if page < total_pages - 1: nav.append(InlineKeyboardButton(text="بعدی ▶️", callback_data=f"folderpg_{folder_id}_{page+1}"))
+        b.row(*nav)
+    
+    b.row(InlineKeyboardButton(text="🔙 بازگشت به پوشه‌ها", callback_data="folders_menu"))
+    return b.as_markup()
+
+def folder_file_info_kb(fid: str, folder_id: str):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📥 دریافت", callback_data=f"dl_{fid}"), InlineKeyboardButton(text="🔗 لینک", callback_data=f"link_{fid}")],
+        [InlineKeyboardButton(text="✏️ کپشن", callback_data=f"editcap_{fid}"), InlineKeyboardButton(text="🔒 رمز", callback_data=f"setpass_{fid}")],
+        [InlineKeyboardButton(text="🗑 حذف از پوشه", callback_data=f"remfromfolder_{fid}_{folder_id}")],
+        [InlineKeyboardButton(text="🔙 بازگشت به پوشه", callback_data=f"folder_{folder_id}")]
+    ])
+
+def add_file_to_folder_kb():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📤 ارسال فایل جدید", callback_data="add_new_file")],
+        [InlineKeyboardButton(text="🔗 ارسال لینک فایل موجود", callback_data="add_existing_file")],
+        [InlineKeyboardButton(text="🔙 انصراف", callback_data="cancel_add_file")]
+    ])
+
+def confirm_remove_from_folder_kb(fid: str, folder_id: str):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ بله حذف کن", callback_data=f"confirm_remove_{fid}_{folder_id}")],
+        [InlineKeyboardButton(text="❌ خیر", callback_data=f"folder_{folder_id}")]
+    ])
 
 def admins_main_menu_kb(): return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="➕ افزودن ادمین", callback_data="add_admin_prompt")], [InlineKeyboardButton(text="⭐ افزودن کاربر VIP", callback_data="add_vip_prompt")], [InlineKeyboardButton(text="❌ حذف ادمین / VIP", callback_data="remove_privileged")], [InlineKeyboardButton(text="🔙 بازگشت به منو", callback_data="panel")]])
 
@@ -548,7 +654,7 @@ def force_join_user_kb(channels: List[str], not_joined: List[tuple]):
 def download_notify_kb(file_id: str, user_id: int): return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="📁 فایل", callback_data=f"file_{file_id}"), InlineKeyboardButton(text="👤 کاربر", callback_data=f"user_{user_id}")]])
 
 # ==================== STATES ====================
-class UploadState(StatesGroup): waiting = State(); caption = State(); password = State()
+class UploadState(StatesGroup): waiting = State(); caption = State(); password = State(); folder_select = State()
 class EditState(StatesGroup): waiting_caption = State(); waiting_password = State()
 class SettingsState(StatesGroup):
     waiting_welcome = State(); waiting_welcome_media = State(); waiting_welcome_caption = State()
@@ -558,6 +664,7 @@ class SettingsState(StatesGroup):
 class BroadcastState(StatesGroup): waiting = State()
 class PasswordState(StatesGroup): waiting = State()
 class ChatState(StatesGroup): waiting = State()
+class FolderState(StatesGroup): waiting_name = State(); waiting_file = State(); waiting_link = State()
 
 # ==================== ROUTER ====================
 router = Router()
@@ -767,18 +874,837 @@ async def auto_delete(msg: Message, delay: int):
 async def menu_upload(message: Message, state: FSMContext):
     if not await db.is_admin(message.from_user.id):
         return
+    
+    folders = await db.get_all_folders()
+    
+    if not folders:
+        # No folders exist, ask to create one
+        b = InlineKeyboardBuilder()
+        b.row(InlineKeyboardButton(text="📁 ایجاد پوشه", callback_data="create_folder"))
+        b.row(InlineKeyboardButton(text="🔙 انصراف", callback_data="panel"))
+        await message.answer(
+            "📁 **هیچ پوشه‌ای وجود ندارد!**\n\n"
+            "لطفاً ابتدا یک پوشه ایجاد کنید.",
+            reply_markup=b.as_markup()
+        )
+        return
+    
+    # Show folders to select
+    b = InlineKeyboardBuilder()
+    b.row(InlineKeyboardButton(text="📁 انتخاب پوشه", callback_data="noop"))
+    for fid, folder in folders.items():
+        name = folder.get("name", "بدون نام")[:25]
+        b.row(InlineKeyboardButton(text=f"📂 {name}", callback_data=f"upload_to_{fid}"))
+    b.row(InlineKeyboardButton(text="🔙 انصراف", callback_data="panel"))
+    
+    await message.answer(
+        "📁 **یک پوشه را انتخاب کنید:**\n\n"
+        "فایل شما در پوشه انتخاب شده ذخیره خواهد شد.",
+        reply_markup=b.as_markup()
+    )
+
+@router.callback_query(F.data.startswith("upload_to_"))
+async def upload_to_folder(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    folder_id = callback.data.replace("upload_to_", "")
+    folder = await db.get_folder(folder_id)
+    
+    if not folder:
+        await callback.message.edit_text("❌ پوشه پیدا نشد.")
+        return
+    
+    await state.update_data(upload_folder=folder_id)
     await state.set_state(UploadState.waiting)
-    await message.answer("📤 فایل را ارسال کنید:", reply_markup=back_inline())
+    
+    await callback.message.edit_text(
+        f"📤 **آپلود فایل به پوشه: {safe_html(folder.get('name', 'بدون نام'))}**\n\n"
+        "لطفاً فایل خود را ارسال کنید.",
+        reply_markup=back_inline("panel")
+    )
+
+# ==================== FOLDER MANAGEMENT ====================
+@router.callback_query(F.data == "create_folder")
+async def create_folder_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(FolderState.waiting_name)
+    await callback.message.edit_text(
+        "📁 **ایجاد پوشه جدید**\n\n"
+        "لطفاً نام پوشه را وارد کنید:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔙 انصراف", callback_data="folders_menu")]
+        ])
+    )
+
+@router.message(FolderState.waiting_name)
+async def create_folder_save(message: Message, state: FSMContext):
+    name = message.text.strip()
+    if not name:
+        await message.answer("❌ نام پوشه نمی‌تواند خالی باشد.")
+        return
+    
+    # Check if folder with same name exists
+    folders = await db.get_all_folders()
+    for fid, folder in folders.items():
+        if folder.get("name", "").lower() == name.lower():
+            await message.answer("❌ پوشه‌ای با این نام قبلاً وجود دارد. لطفاً نام دیگری انتخاب کنید.")
+            return
+    
+    folder_id = await db.add_folder(name, message.from_user.id)
+    await db.add_log("folder_create", message.from_user.id, f"Created folder: {name}")
+    
+    await message.answer(
+        f"✅ **پوشه با موفقیت ساخته شد!**\n\n"
+        f"📁 نام: {safe_html(name)}\n"
+        f"🆔 شناسه: <code>{folder_id}</code>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📂 مشاهده پوشه", callback_data=f"folder_{folder_id}")],
+            [InlineKeyboardButton(text="🔙 بازگشت به پوشه‌ها", callback_data="folders_menu")]
+        ])
+    )
+    await state.clear()
+
+@router.callback_query(F.data == "folders_menu")
+async def folders_menu(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.edit_text(
+        "📂 **مدیریت فایل‌ها و پوشه‌ها**",
+        reply_markup=await folders_main_kb()
+    )
 
 @router.message(F.text == "📂 مدیریت فایل‌ها")
 async def menu_files(message: Message):
     if not await db.is_admin(message.from_user.id):
         return
+    await message.answer(
+        "📂 **مدیریت فایل‌ها و پوشه‌ها**",
+        reply_markup=await folders_main_kb()
+    )
+
+@router.callback_query(F.data.startswith("folder_"))
+async def view_folder(callback: CallbackQuery):
+    await callback.answer()
+    folder_id = callback.data.replace("folder_", "")
+    folder = await db.get_folder(folder_id)
+    
+    if not folder:
+        await callback.message.edit_text("❌ پوشه پیدا نشد.", reply_markup=await folders_main_kb())
+        return
+    
+    # Get files in folder
+    files = await db.get_files_by_folder(folder_id)
+    await show_folder_files(callback.message, folder, files, folder_id, 0)
+
+async def show_folder_files(message: Message, folder: Dict, files: Dict, folder_id: str, page: int):
+    items = list(files.items())
+    per_page = 15
+    total_pages = max(1, (len(items) + per_page - 1) // per_page)
+    start = page * per_page
+    page_items = items[start:start+per_page]
+    
+    folder_name = folder.get("name", "بدون نام")
+    file_count = len(items)
+    
+    txt = f"📂 **{safe_html(folder_name)}**\n\n"
+    txt += f"📄 تعداد فایل‌ها: {file_count}\n"
+    txt += f"📅 ایجاد: {folder.get('created', '')[:10]}\n"
+    txt += f"{'─' * 20}\n"
+    
+    # Update folder file count
+    await db.update_folder_file_count(folder_id)
+    
+    if isinstance(message, CallbackQuery):
+        await message.message.edit_text(txt, reply_markup=folder_files_kb(page_items, folder_id, page, total_pages))
+    else:
+        await message.answer(txt, reply_markup=folder_files_kb(page_items, folder_id, page, total_pages))
+
+@router.callback_query(F.data.startswith("folderpg_"))
+async def folder_page(callback: CallbackQuery):
+    await callback.answer()
+    parts = callback.data.replace("folderpg_", "").split("_")
+    folder_id = parts[0]
+    page = int(parts[1])
+    
+    folder = await db.get_folder(folder_id)
+    if not folder:
+        await callback.message.edit_text("❌ پوشه پیدا نشد.")
+        return
+    
+    files = await db.get_files_by_folder(folder_id)
+    await show_folder_files(callback.message, folder, files, folder_id, page)
+
+@router.callback_query(F.data.startswith("folderfile_"))
+async def view_folder_file(callback: CallbackQuery):
+    await callback.answer()
+    parts = callback.data.replace("folderfile_", "").split("_")
+    fid = parts[0]
+    folder_id = parts[1]
+    
+    f = await db.get_file(fid)
+    if not f:
+        await callback.answer("❌ فایل پیدا نشد", show_alert=True)
+        return
+    
+    lock = "🔒 دارد" if f.get("password") else "🔓 ندارد"
+    type_icons = {"photo": "🖼", "video": "🎬", "audio": "🎵", "voice": "🎤", "animation": "✨", "sticker": "🏷", "document": "📄"}
+    icon = type_icons.get(f.get("type", "document"), "📁")
+    
+    bot = await callback.bot.get_me()
+    link = f"https://t.me/{bot.username}?start={fid}"
+    
+    txt = f"{icon} **مشخصات فایل**\n\n"
+    txt += f"📝 کپشن: {safe_html(f.get('caption', 'بدون کپشن'))}\n"
+    txt += f"🆔 شناسه: <code>{safe_html(fid)}</code>\n"
+    txt += f"📂 نوع: {f.get('type', 'ناشناس')}\n"
+    txt += f"📥 دانلودها: {f.get('downloads', 0)}\n"
+    txt += f"👁 بازدیدها: {f.get('views', 0)}\n"
+    txt += f"{lock}\n"
+    txt += f"📅 تاریخ: {f.get('date', '')[:10]}\n\n"
+    txt += f"🔗 لینک استارت:\n<code>{link}</code>"
+    
+    await callback.message.edit_text(txt, reply_markup=folder_file_info_kb(fid, folder_id))
+
+# ==================== ADD FILE TO FOLDER ====================
+@router.callback_query(F.data.startswith("addfile_"))
+async def add_file_to_folder_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    folder_id = callback.data.replace("addfile_", "")
+    folder = await db.get_folder(folder_id)
+    
+    if not folder:
+        await callback.message.edit_text("❌ پوشه پیدا نشد.")
+        return
+    
+    await state.update_data(add_folder=folder_id)
+    await callback.message.edit_text(
+        f"📤 **اضافه کردن فایل به {safe_html(folder.get('name', 'بدون نام'))}**\n\n"
+        "لطفاً یکی از گزینه‌های زیر را انتخاب کنید:",
+        reply_markup=add_file_to_folder_kb()
+    )
+
+@router.callback_query(F.data == "add_new_file")
+async def add_new_file_to_folder(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(FolderState.waiting_file)
+    await callback.message.edit_text(
+        "📤 **ارسال فایل جدید**\n\n"
+        "لطفاً فایل خود را ارسال کنید.",
+        reply_markup=back_inline(f"addfile_{ (await state.get_data()).get('add_folder', '') }")
+    )
+
+@router.message(FolderState.waiting_file)
+async def receive_new_file_for_folder(message: Message, state: FSMContext):
+    data = await state.get_data()
+    folder_id = data.get("add_folder")
+    
+    if not folder_id:
+        await message.answer("❌ خطا در شناسایی پوشه.")
+        await state.clear()
+        return
+    
+    folder = await db.get_folder(folder_id)
+    if not folder:
+        await message.answer("❌ پوشه پیدا نشد.")
+        await state.clear()
+        return
+    
+    # Extract file info
+    file_id, file_type, file_name = None, "document", ""
+    if message.photo:
+        file_id, file_type = message.photo[-1].file_id, "photo"
+    elif message.video:
+        file_id, file_type, file_name = message.video.file_id, "video", message.video.file_name or ""
+    elif message.audio:
+        file_id, file_type, file_name = message.audio.file_id, "audio", message.audio.file_name or ""
+    elif message.voice:
+        file_id, file_type = message.voice.file_id, "voice"
+    elif message.animation:
+        file_id, file_type, file_name = message.animation.file_id, "animation", message.animation.file_name or ""
+    elif message.sticker:
+        file_id, file_type = message.sticker.file_id, "sticker"
+    elif message.document:
+        file_id, file_type, file_name = message.document.file_id, "document", message.document.file_name or ""
+    
+    if not file_id:
+        await message.answer("❌ فایل معتبر نیست. لطفاً دوباره ارسال کنید.")
+        return
+    
+    # Save file with folder
+    fid = str(uuid.uuid4())[:8]
+    await db.add_file({
+        "id": fid,
+        "file_id": file_id,
+        "type": file_type,
+        "caption": message.caption or "",
+        "file_name": file_name,
+        "password": "",
+        "admin": message.from_user.id,
+        "folder": folder_id
+    })
+    
+    await db.update_folder_file_count(folder_id)
+    await db.add_log("file_add_to_folder", message.from_user.id, f"Added file {fid} to folder {folder_id}")
+    
+    bot = await message.bot.get_me()
+    link = f"https://t.me/{bot.username}?start={fid}"
+    
+    await message.answer(
+        f"✅ **فایل با موفقیت به پوشه اضافه شد!**\n\n"
+        f"📁 پوشه: {safe_html(folder.get('name', 'بدون نام'))}\n"
+        f"🆔 شناسه: <code>{fid}</code>\n"
+        f"🔗 لینک استارت:\n<code>{link}</code>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📂 مشاهده پوشه", callback_data=f"folder_{folder_id}")],
+            [InlineKeyboardButton(text="➕ اضافه کردن فایل دیگر", callback_data=f"addfile_{folder_id}")],
+            [InlineKeyboardButton(text="🔙 پوشه‌ها", callback_data="folders_menu")]
+        ])
+    )
+    await state.clear()
+
+@router.callback_query(F.data == "add_existing_file")
+async def add_existing_file_to_folder(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(FolderState.waiting_link)
+    await callback.message.edit_text(
+        "🔗 **اضافه کردن فایل موجود**\n\n"
+        "لطفاً لینک استارت فایل را ارسال کنید:\n"
+        "مثال: `/start abc123` یا `https://t.me/bot?start=abc123`\n\n"
+        "⚠️ اگر فایل در پوشه دیگری باشد، به این پوشه منتقل می‌شود.",
+        reply_markup=back_inline(f"addfile_{ (await state.get_data()).get('add_folder', '') }")
+    )
+
+@router.message(FolderState.waiting_link)
+async def receive_existing_file_link(message: Message, state: FSMContext):
+    data = await state.get_data()
+    folder_id = data.get("add_folder")
+    
+    if not folder_id:
+        await message.answer("❌ خطا در شناسایی پوشه.")
+        await state.clear()
+        return
+    
+    folder = await db.get_folder(folder_id)
+    if not folder:
+        await message.answer("❌ پوشه پیدا نشد.")
+        await state.clear()
+        return
+    
+    # Extract file ID from link
+    text = message.text.strip()
+    fid = None
+    
+    if text.startswith("/start"):
+        parts = text.split()
+        if len(parts) > 1:
+            fid = parts[1].strip()
+    elif "?start=" in text:
+        fid = text.split("?start=")[-1].strip().split()[0]
+    else:
+        # Try as direct ID
+        fid = text.strip()
+    
+    if not fid:
+        await message.answer("❌ لینک معتبر نیست. لطفاً مجدداً ارسال کنید.")
+        return
+    
+    file_data = await db.get_file(fid)
+    if not file_data:
+        await message.answer("❌ فایل با این شناسه یافت نشد.")
+        return
+    
+    # Check if file already in this folder
+    if file_data.get("folder", "") == folder_id:
+        await message.answer("❌ این فایل قبلاً در این پوشه وجود دارد.")
+        return
+    
+    # Get old folder name for notification
+    old_folder_id = file_data.get("folder", "")
+    old_folder_name = "بدون پوشه"
+    if old_folder_id:
+        old_folder = await db.get_folder(old_folder_id)
+        if old_folder:
+            old_folder_name = old_folder.get("name", "بدون نام")
+    
+    # Move file to new folder
+    await db.update_file_folder(fid, folder_id)
+    
+    # Update folder counts
+    await db.update_folder_file_count(folder_id)
+    if old_folder_id:
+        await db.update_folder_file_count(old_folder_id)
+    
+    await db.add_log("file_move", message.from_user.id, f"Moved file {fid} from {old_folder_id} to {folder_id}")
+    
+    bot = await message.bot.get_me()
+    link = f"https://t.me/{bot.username}?start={fid}"
+    
+    await message.answer(
+        f"✅ **فایل با موفقیت منتقل شد!**\n\n"
+        f"📁 پوشه جدید: {safe_html(folder.get('name', 'بدون نام'))}\n"
+        f"📁 پوشه قبلی: {safe_html(old_folder_name)}\n"
+        f"🆔 شناسه: <code>{fid}</code>\n"
+        f"🔗 لینک استارت:\n<code>{link}</code>",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📂 مشاهده پوشه", callback_data=f"folder_{folder_id}")],
+            [InlineKeyboardButton(text="➕ اضافه کردن فایل دیگر", callback_data=f"addfile_{folder_id}")],
+            [InlineKeyboardButton(text="🔙 پوشه‌ها", callback_data="folders_menu")]
+        ])
+    )
+    await state.clear()
+
+@router.callback_query(F.data == "cancel_add_file")
+async def cancel_add_file(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.clear()
+    await callback.message.edit_text("❌ عملیات لغو شد.", reply_markup=await folders_main_kb())
+
+# ==================== REMOVE FILE FROM FOLDER ====================
+@router.callback_query(F.data.startswith("remfromfolder_"))
+async def remove_from_folder_confirm(callback: CallbackQuery):
+    await callback.answer()
+    parts = callback.data.replace("remfromfolder_", "").split("_")
+    fid = parts[0]
+    folder_id = parts[1]
+    
+    await callback.message.edit_text(
+        "⚠️ **آیا از حذف این فایل از پوشه اطمینان دارید؟**\n\n"
+        "فایل از پوشه حذف می‌شود اما از ربات پاک نمی‌شود.",
+        reply_markup=confirm_remove_from_folder_kb(fid, folder_id)
+    )
+
+@router.callback_query(F.data.startswith("confirm_remove_"))
+async def confirm_remove_from_folder(callback: CallbackQuery):
+    await callback.answer()
+    parts = callback.data.replace("confirm_remove_", "").split("_")
+    fid = parts[0]
+    folder_id = parts[1]
+    
+    # Remove file from folder
+    await db.update_file_folder(fid, "")
+    await db.update_folder_file_count(folder_id)
+    await db.add_log("file_remove_from_folder", callback.from_user.id, f"Removed file {fid} from folder {folder_id}")
+    
+    await callback.message.edit_text(
+        "✅ فایل از پوشه حذف شد.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📂 بازگشت به پوشه", callback_data=f"folder_{folder_id}")],
+            [InlineKeyboardButton(text="🔙 پوشه‌ها", callback_data="folders_menu")]
+        ])
+    )
+
+# ==================== FILES CALLBACKS (Legacy support) ====================
+def files_kb(files: Dict, page: int = 0):
+    b = InlineKeyboardBuilder()
+    items = list(files.items())
+    per_page = 6
+    total_pages = max(1, (len(items) + per_page - 1) // per_page)
+    start = page * per_page
+    type_icons = {"photo": "🖼", "video": "🎬", "audio": "🎵", "voice": "🎤", "animation": "✨", "sticker": "🏷", "document": "📄"}
+    for fid, f in items[start:start+per_page]:
+        cap = f.get("caption", "بدون کپشن")[:25]
+        icon = type_icons.get(f.get("type", "document"), "📁")
+        lock = "🔒" if f.get("password") else ""
+        b.row(InlineKeyboardButton(text=f"{icon} {lock} {cap} | 📥{f['downloads']}", callback_data=f"file_{fid}"))
+    if total_pages > 1:
+        nav = []
+        if page > 0: nav.append(InlineKeyboardButton(text="◀️", callback_data=f"files_pg_{page-1}"))
+        nav.append(InlineKeyboardButton(text=f"{page+1}/{total_pages}", callback_data="noop"))
+        if page < total_pages - 1: nav.append(InlineKeyboardButton(text="▶️", callback_data=f"files_pg_{page+1}"))
+        b.row(*nav)
+    b.row(InlineKeyboardButton(text="🔙 بازگشت", callback_data="panel"))
+    return b.as_markup()
+
+def file_actions_kb(fid: str):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📥 دریافت", callback_data=f"dl_{fid}"), InlineKeyboardButton(text="🔗 لینک", callback_data=f"link_{fid}")],
+        [InlineKeyboardButton(text="✏️ کپشن", callback_data=f"editcap_{fid}"), InlineKeyboardButton(text="🔒 رمز", callback_data=f"setpass_{fid}")],
+        [InlineKeyboardButton(text="🗑 حذف", callback_data=f"del_{fid}")],
+        [InlineKeyboardButton(text="🔙 فایل‌ها", callback_data="files_list")]
+    ])
+def confirm_delete_kb(fid: str): return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ بله", callback_data=f"delyes_{fid}"), InlineKeyboardButton(text="❌ خیر", callback_data=f"file_{fid}")]])
+
+@router.callback_query(F.data == "files_list")
+async def files_list_cb(callback: CallbackQuery):
+    await callback.answer()
     files = await db.get_all_files()
     if not files:
-        await message.answer("📂 فایلی نیست.", reply_markup=await get_admin_panel_kb())
+        await callback.message.edit_text("📂 فایلی نیست.")
         return
-    await message.answer(f"📂 فایل‌ها ({len(files)})", reply_markup=files_kb(files))
+    await callback.message.edit_text(f"📂 فایل‌ها ({len(files)})", reply_markup=files_kb(files))
+
+@router.callback_query(F.data.startswith("files_pg_"))
+async def files_page(callback: CallbackQuery):
+    await callback.answer()
+    page = int(callback.data.replace("files_pg_", ""))
+    await callback.message.edit_text(f"📂 صفحه {page+1}", reply_markup=files_kb(await db.get_all_files(), page))
+
+@router.callback_query(F.data.startswith("file_"))
+async def file_info(callback: CallbackQuery):
+    await callback.answer()
+    f = await db.get_file(callback.data.replace("file_", ""))
+    if not f:
+        await callback.answer("❌ پیدا نشد", show_alert=True)
+        return
+    lock = "🔒 دارد" if f.get("password") else "🔓 ندارد"
+    await callback.message.edit_text(f"📁 {safe_html(f.get('caption',''))}\n🆔: <code>{safe_html(f['id'])}</code>\n📥: {f['downloads']}\n{lock}\n📅: {f['date'][:10]}", reply_markup=file_actions_kb(f['id']))
+
+@router.callback_query(F.data.startswith("dl_"))
+async def dl_file(callback: CallbackQuery):
+    await callback.answer("📥 ارسال...")
+    f = await db.get_file(callback.data.replace("dl_", ""))
+    if f:
+        await send_file_to_user(callback.message, f)
+        await notify_admins_download(callback.bot, f, callback.from_user)
+
+@router.callback_query(F.data.startswith("link_"))
+async def get_link(callback: CallbackQuery):
+    await callback.answer()
+    f = await db.get_file(callback.data.replace("link_", ""))
+    if f:
+        bot = await callback.bot.get_me()
+        link = f"https://t.me/{bot.username}?start={f['id']}"
+        await callback.message.answer(f"🔗 <a href='{link}'>کلیک</a>\n<code>{link}</code>")
+
+@router.callback_query(F.data.startswith("editcap_"))
+async def edit_cap_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    fid = callback.data.replace("editcap_", "")
+    await state.update_data(edit_fid=fid)
+    await state.set_state(EditState.waiting_caption)
+    await callback.message.edit_text("✏️ کپشن:", reply_markup=back_inline(f"file_{fid}"))
+
+@router.message(EditState.waiting_caption)
+async def edit_cap_save(message: Message, state: FSMContext):
+    data = await state.get_data()
+    if data.get("edit_fid"):
+        await db.update_caption(data["edit_fid"], message.text)
+        await message.answer("✅ ویرایش شد.", reply_markup=await get_admin_panel_kb())
+    await state.clear()
+
+@router.callback_query(F.data.startswith("setpass_"))
+async def set_pass_start(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    fid = callback.data.replace("setpass_", "")
+    await state.update_data(edit_fid=fid)
+    await state.set_state(EditState.waiting_password)
+    await callback.message.edit_text("🔒 رمز:", reply_markup=back_inline(f"file_{fid}"))
+
+@router.message(EditState.waiting_password)
+async def set_pass_save(message: Message, state: FSMContext):
+    data = await state.get_data()
+    if data.get("edit_fid"):
+        p = "" if message.text.lower() == "remove" else message.text
+        await db.update_password(data["edit_fid"], p)
+        await message.answer("✅ تنظیم شد.", reply_markup=await get_admin_panel_kb())
+    await state.clear()
+
+@router.callback_query(F.data.startswith("del_"))
+async def del_confirm(callback: CallbackQuery):
+    await callback.answer()
+    await callback.message.edit_text("⚠️ حذف شود؟", reply_markup=confirm_delete_kb(callback.data.replace("del_", "")))
+
+@router.callback_query(F.data.startswith("delyes_"))
+async def del_exec(callback: CallbackQuery):
+    fid = callback.data.replace("delyes_", "")
+    file_data = await db.get_file(fid)
+    folder_id = file_data.get("folder", "") if file_data else ""
+    
+    await db.delete_file(fid)
+    if folder_id:
+        await db.update_folder_file_count(folder_id)
+    
+    await callback.answer("✅ حذف شد")
+    await files_list_cb(callback)
+
+# ==================== OTHER REPLY KEYBOARD ====================
+@router.message(F.text == "📢 ارسال همگانی")
+async def menu_broadcast(message: Message, state: FSMContext):
+    if not await db.is_admin(message.from_user.id):
+        return
+    await state.set_state(BroadcastState.waiting)
+    await message.answer("📢 پیام را بفرستید:", reply_markup=back_inline())
+
+@router.message(F.text == "⚙️ تنظیمات")
+async def menu_settings(message: Message):
+    if not await db.is_admin(message.from_user.id):
+        return
+    s = await db.get_settings()
+    await message.answer("⚙️ تنظیمات", reply_markup=settings_kb(s))
+
+@router.message(F.text == "👮 ادمین‌ها")
+async def menu_admins_vip(message: Message):
+    if not await db.is_admin(message.from_user.id):
+        return
+    admins = await db.get_admins()
+    vips = await db.get_vips()
+    txt = "👮 **مدیریت ادمین‌ها و VIP**\n\n**ADMIN:**\n\n"
+    if admins:
+        for aid, a in admins.items():
+            uname = a.get('username', '')
+            display = f"@{uname}-admin" if uname else f"`{aid}`-admin"
+            txt += f"{display}\n"
+    else:
+        txt += "هیچ ادمینی نیست\n"
+    txt += "\n➖➖➖➖➖➖➖➖➖➖\n\n**VIP:**\n\n"
+    if vips:
+        for vid, v in vips.items():
+            uname = v.get('username', '')
+            display = f"@{uname}-vip" if uname else f"`{vid}`-vip"
+            txt += f"{display}\n"
+    else:
+        txt += "هیچ VIP ای نیست\n"
+    await message.answer(txt, reply_markup=admins_main_menu_kb())
+
+@router.callback_query(F.data == "admins_menu")
+async def admins_menu_cb(callback: CallbackQuery):
+    await callback.answer()
+    admins = await db.get_admins()
+    vips = await db.get_vips()
+    txt = "👮 **مدیریت ادمین‌ها و VIP**\n\n**ADMIN:**\n\n"
+    if admins:
+        for aid, a in admins.items():
+            uname = a.get('username', '')
+            display = f"@{uname}-admin" if uname else f"`{aid}`-admin"
+            txt += f"{display}\n"
+    else:
+        txt += "هیچ ادمینی نیست\n"
+    txt += "\n➖➖➖➖➖➖➖➖➖➖\n\n**VIP:**\n\n"
+    if vips:
+        for vid, v in vips.items():
+            uname = v.get('username', '')
+            display = f"@{uname}-vip" if uname else f"`{vid}`-vip"
+            txt += f"{display}\n"
+    else:
+        txt += "هیچ VIP ای نیست\n"
+    await callback.message.edit_text(txt, reply_markup=admins_main_menu_kb())
+
+@router.callback_query(F.data == "add_admin_prompt")
+async def add_admin_prompt(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(SettingsState.waiting_add_admin)
+    await callback.message.edit_text("👮 **افزودن ادمین**\n\n📌 آیدی عددی یا فوروارد:", reply_markup=back_inline("admins_menu"))
+
+@router.message(SettingsState.waiting_add_admin)
+async def save_admin(message: Message, state: FSMContext):
+    uid, username, first_name, error = await db.resolve_user_from_input(message.bot, message)
+    if error:
+        await message.answer(f"{error}", reply_markup=back_inline("admins_menu"))
+        return
+    if uid:
+        if await db.is_admin(uid):
+            await message.answer("❌ قبلاً ادمین است.", reply_markup=await get_admin_panel_kb())
+        else:
+            await db.add_admin(uid, username)
+            await db.add_log("admin_add", message.from_user.id, f"Added {uid}")
+            display = f"@{username}" if username else first_name or uid
+            await message.answer(f"✅ ادمین {display} اضافه شد.", reply_markup=await get_admin_panel_kb())
+        await state.clear()
+
+@router.callback_query(F.data == "add_vip_prompt")
+async def add_vip_prompt(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.set_state(SettingsState.waiting_add_vip)
+    await callback.message.edit_text("⭐ **افزودن VIP**\n\n📌 آیدی عددی یا فوروارد:", reply_markup=back_inline("admins_menu"))
+
+@router.message(SettingsState.waiting_add_vip)
+async def save_vip(message: Message, state: FSMContext):
+    uid, username, first_name, error = await db.resolve_user_from_input(message.bot, message)
+    if error:
+        await message.answer(f"{error}", reply_markup=back_inline("admins_menu"))
+        return
+    if uid:
+        if await db.is_vip(uid):
+            await message.answer("❌ قبلاً VIP است.", reply_markup=await get_admin_panel_kb())
+        else:
+            await db.add_vip(uid, username)
+            await db.add_log("vip_add", message.from_user.id, f"Added VIP {uid}")
+            display = f"@{username}" if username else first_name or uid
+            await message.answer(f"✅ VIP {display} اضافه شد.", reply_markup=await get_admin_panel_kb())
+        await state.clear()
+
+@router.callback_query(F.data == "remove_privileged")
+async def remove_priv(callback: CallbackQuery):
+    await callback.answer()
+    admins = await db.get_admins()
+    vips = await db.get_vips()
+    admins_show = {k: v for k, v in admins.items() if str(k) != str(ADMIN_ID)}
+    if not admins_show and not vips:
+        await callback.answer("❌ هیچکس برای حذف نیست.", show_alert=True)
+        return
+    await callback.message.edit_text("❌ انتخاب کنید:", reply_markup=remove_privileged_kb(admins_show, vips))
+
+@router.callback_query(F.data.startswith("ra_"))
+async def rem_admin(callback: CallbackQuery):
+    aid = callback.data.replace("ra_", "")
+    await db.remove_admin(int(aid))
+    await callback.answer("✅ حذف شد")
+    await remove_priv(callback)
+
+@router.callback_query(F.data.startswith("rv_"))
+async def rem_vip(callback: CallbackQuery):
+    vid = callback.data.replace("rv_", "")
+    await db.remove_vip(int(vid))
+    await callback.answer("✅ حذف شد")
+    await remove_priv(callback)
+
+@router.message(F.text == "📜 گزارشات")
+async def menu_logs(message: Message):
+    if not await db.is_admin(message.from_user.id):
+        return
+    logs_list = await db.get_logs(20)
+    if not logs_list:
+        await message.answer("📜 گزارشی نیست.", reply_markup=await get_admin_panel_kb())
+        return
+    txt = "📜 گزارشات:\n\n" + "\n".join([f"<code>{l['time'][:19]}</code> {l['action']}" for l in logs_list])
+    await message.answer(txt[:4000], reply_markup=await get_admin_panel_kb())
+
+@router.message(F.text == "🔗 لینک‌های فعال")
+async def menu_links(message: Message):
+    if not await db.is_admin(message.from_user.id):
+        return
+    files = await db.get_all_files()
+    if not files:
+        await message.answer("🔗 لینکی نیست.", reply_markup=await get_admin_panel_kb())
+        return
+    bot = await message.bot.get_me()
+    txt = "🔗 لینک‌ها:\n\n" + "\n".join([f"• {safe_html(f.get('caption','')[:20])}\n  /start {safe_html(fid)}" for fid, f in list(files.items())[:10]])
+    await message.answer(txt, reply_markup=await get_admin_panel_kb())
+
+@router.message(F.text == "💾 پشتیبان‌گیری")
+async def menu_backup(message: Message):
+    if not await db.is_admin(message.from_user.id):
+        return
+    import shutil
+    os.makedirs("backups", exist_ok=True)
+    fn = f"backups/backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+    shutil.make_archive(fn.replace('.zip', ''), 'zip', '.', lambda x: x.endswith('.json'))
+    await message.answer_document(FSInputFile(fn), caption="✅ پشتیبان آماده")
+    await message.answer("💾 آماده شد.", reply_markup=await get_admin_panel_kb())
+
+@router.message(F.text.contains("ربات فعال است"))
+@router.message(F.text.contains("ربات خاموش است"))
+async def toggle_bot_from_panel(message: Message):
+    if not await db.is_admin(message.from_user.id):
+        return
+    new_status = await db.toggle_bot()
+    await db.add_log("toggle", message.from_user.id, f"Bot {'ON' if new_status else 'OFF'}")
+    kb = await get_admin_panel_kb()
+    if new_status:
+        await message.answer("🟢 **ربات روشن شد!**", reply_markup=kb)
+    else:
+        await message.answer("🔴 **ربات خاموش شد!**", reply_markup=kb)
+
+@router.callback_query(F.data == "toggle_forward_lock")
+async def toggle_forward_lock_handler(callback: CallbackQuery):
+    await callback.answer()
+    new_status = await db.toggle_forward_lock()
+    await db.add_log("settings", callback.from_user.id, f"Forward Lock {'ON' if new_status else 'OFF'}")
+    s = await db.get_settings()
+    await callback.message.edit_text("⚙️ تنظیمات", reply_markup=settings_kb(s))
+    if new_status:
+        await callback.message.answer("🔒 **قفل فوروارد فعال شد!**")
+    else:
+        await callback.message.answer("🔓 **قفل فوروارد غیرفعال شد!**")
+
+# ==================== UPLOAD (Legacy with folder selection) ====================
+@router.message(UploadState.waiting)
+async def upload_receive(message: Message, state: FSMContext):
+    file_id, file_type, file_name = None, "document", ""
+    if message.photo:
+        file_id, file_type = message.photo[-1].file_id, "photo"
+    elif message.video:
+        file_id, file_type, file_name = message.video.file_id, "video", message.video.file_name or ""
+    elif message.audio:
+        file_id, file_type, file_name = message.audio.file_id, "audio", message.audio.file_name or ""
+    elif message.voice:
+        file_id, file_type = message.voice.file_id, "voice"
+    elif message.animation:
+        file_id, file_type, file_name = message.animation.file_id, "animation", message.animation.file_name or ""
+    elif message.sticker:
+        file_id, file_type = message.sticker.file_id, "sticker"
+    elif message.document:
+        file_id, file_type, file_name = message.document.file_id, "document", message.document.file_name or ""
+    if not file_id:
+        await message.answer("❌ فایل معتبر نیست.")
+        return
+    
+    data = await state.get_data()
+    folder_id = data.get("upload_folder", "")
+    
+    await state.update_data(file_id=file_id, file_type=file_type, file_name=file_name)
+    await state.set_state(UploadState.caption)
+    await message.answer("✅ دریافت شد! کپشن:", reply_markup=skip_back_inline())
+
+@router.callback_query(F.data == "skip_caption")
+async def skip_caption(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.update_data(caption="")
+    await state.set_state(UploadState.password)
+    await callback.message.edit_text("🔒 رمز؟", reply_markup=skip_pass_inline())
+
+@router.message(UploadState.caption)
+async def upload_caption(message: Message, state: FSMContext):
+    await state.update_data(caption=message.text or "")
+    await state.set_state(UploadState.password)
+    await message.answer("🔒 رمز؟", reply_markup=skip_pass_inline())
+
+@router.callback_query(F.data == "skip_password")
+async def skip_password(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.update_data(password="")
+    await finalize_upload(callback.message, state, callback.from_user.id)
+
+@router.message(UploadState.password)
+async def upload_password(message: Message, state: FSMContext):
+    await state.update_data(password=message.text or "")
+    await finalize_upload(message, state, message.from_user.id)
+
+async def finalize_upload(message: Message, state: FSMContext, admin_id: int):
+    data = await state.get_data()
+    fid = str(uuid.uuid4())[:8]
+    folder_id = data.get("upload_folder", "")
+    
+    await db.add_file({
+        "id": fid, 
+        "file_id": data["file_id"], 
+        "type": data["file_type"], 
+        "caption": data.get("caption", ""), 
+        "file_name": data.get("file_name", ""), 
+        "password": data.get("password", ""), 
+        "admin": admin_id,
+        "folder": folder_id
+    })
+    
+    if folder_id:
+        await db.update_folder_file_count(folder_id)
+    
+    await db.add_log("upload", admin_id, f"Uploaded {fid} to folder {folder_id}")
+    
+    bot = await message.bot.get_me()
+    link = f"https://t.me/{bot.username}?start={fid}"
+    
+    icon = {"photo": "🖼", "video": "🎬", "audio": "🎵", "voice": "🎤", "animation": "✨", "sticker": "🏷", "document": "📄"}.get(data["file_type"], "📁")
+    
+    folder_name = ""
+    if folder_id:
+        folder = await db.get_folder(folder_id)
+        if folder:
+            folder_name = folder.get("name", "")
+    
+    txt = f"✅ **آپلود موفق!**\n\n"
+    txt += f"{icon} نوع: {data['file_type']}\n"
+    txt += f"🆔 شناسه: <code>{fid}</code>\n"
+    if folder_name:
+        txt += f"📁 پوشه: {safe_html(folder_name)}\n"
+    txt += f"📝 کپشن: {safe_html(data.get('caption', 'بدون کپشن'))}\n"
+    if data.get("password"):
+        txt += f"🔑 رمز: <code>{safe_html(data['password'])}</code>\n"
+    txt += f"\n🔗 لینک استارت کامل:\n<code>{link}</code>"
+    
+    await message.answer(txt, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📂 مشاهده پوشه", callback_data=f"folder_{folder_id}") if folder_id else InlineKeyboardButton(text="📂 مدیریت فایل‌ها", callback_data="folders_menu")],
+        [InlineKeyboardButton(text="🔙 پنل مدیریت", callback_data="panel")]
+    ]))
+    await state.clear()
 
 # ==================== ENHANCED STATISTICS ====================
 @router.message(F.text == "📊 آمار ربات")
@@ -1009,260 +1935,6 @@ async def handle_incoming_message(message: Message):
                 pass
             return
 
-# ==================== OTHER REPLY KEYBOARD ====================
-@router.message(F.text == "📢 ارسال همگانی")
-async def menu_broadcast(message: Message, state: FSMContext):
-    if not await db.is_admin(message.from_user.id):
-        return
-    await state.set_state(BroadcastState.waiting)
-    await message.answer("📢 پیام را بفرستید:", reply_markup=back_inline())
-
-@router.message(F.text == "⚙️ تنظیمات")
-async def menu_settings(message: Message):
-    if not await db.is_admin(message.from_user.id):
-        return
-    s = await db.get_settings()
-    await message.answer("⚙️ تنظیمات", reply_markup=settings_kb(s))
-
-@router.message(F.text == "👮 ادمین‌ها")
-async def menu_admins_vip(message: Message):
-    if not await db.is_admin(message.from_user.id):
-        return
-    admins = await db.get_admins()
-    vips = await db.get_vips()
-    txt = "👮 **مدیریت ادمین‌ها و VIP**\n\n**ADMIN:**\n\n"
-    if admins:
-        for aid, a in admins.items():
-            uname = a.get('username', '')
-            display = f"@{uname}-admin" if uname else f"`{aid}`-admin"
-            txt += f"{display}\n"
-    else:
-        txt += "هیچ ادمینی نیست\n"
-    txt += "\n➖➖➖➖➖➖➖➖➖➖\n\n**VIP:**\n\n"
-    if vips:
-        for vid, v in vips.items():
-            uname = v.get('username', '')
-            display = f"@{uname}-vip" if uname else f"`{vid}`-vip"
-            txt += f"{display}\n"
-    else:
-        txt += "هیچ VIP ای نیست\n"
-    await message.answer(txt, reply_markup=admins_main_menu_kb())
-
-@router.callback_query(F.data == "admins_menu")
-async def admins_menu_cb(callback: CallbackQuery):
-    await callback.answer()
-    admins = await db.get_admins()
-    vips = await db.get_vips()
-    txt = "👮 **مدیریت ادمین‌ها و VIP**\n\n**ADMIN:**\n\n"
-    if admins:
-        for aid, a in admins.items():
-            uname = a.get('username', '')
-            display = f"@{uname}-admin" if uname else f"`{aid}`-admin"
-            txt += f"{display}\n"
-    else:
-        txt += "هیچ ادمینی نیست\n"
-    txt += "\n➖➖➖➖➖➖➖➖➖➖\n\n**VIP:**\n\n"
-    if vips:
-        for vid, v in vips.items():
-            uname = v.get('username', '')
-            display = f"@{uname}-vip" if uname else f"`{vid}`-vip"
-            txt += f"{display}\n"
-    else:
-        txt += "هیچ VIP ای نیست\n"
-    await callback.message.edit_text(txt, reply_markup=admins_main_menu_kb())
-
-@router.callback_query(F.data == "add_admin_prompt")
-async def add_admin_prompt(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await state.set_state(SettingsState.waiting_add_admin)
-    await callback.message.edit_text("👮 **افزودن ادمین**\n\n📌 آیدی عددی یا فوروارد:", reply_markup=back_inline("admins_menu"))
-
-@router.message(SettingsState.waiting_add_admin)
-async def save_admin(message: Message, state: FSMContext):
-    uid, username, first_name, error = await db.resolve_user_from_input(message.bot, message)
-    if error:
-        await message.answer(f"{error}", reply_markup=back_inline("admins_menu"))
-        return
-    if uid:
-        if await db.is_admin(uid):
-            await message.answer("❌ قبلاً ادمین است.", reply_markup=await get_admin_panel_kb())
-        else:
-            await db.add_admin(uid, username)
-            await db.add_log("admin_add", message.from_user.id, f"Added {uid}")
-            display = f"@{username}" if username else first_name or uid
-            await message.answer(f"✅ ادمین {display} اضافه شد.", reply_markup=await get_admin_panel_kb())
-        await state.clear()
-
-@router.callback_query(F.data == "add_vip_prompt")
-async def add_vip_prompt(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await state.set_state(SettingsState.waiting_add_vip)
-    await callback.message.edit_text("⭐ **افزودن VIP**\n\n📌 آیدی عددی یا فوروارد:", reply_markup=back_inline("admins_menu"))
-
-@router.message(SettingsState.waiting_add_vip)
-async def save_vip(message: Message, state: FSMContext):
-    uid, username, first_name, error = await db.resolve_user_from_input(message.bot, message)
-    if error:
-        await message.answer(f"{error}", reply_markup=back_inline("admins_menu"))
-        return
-    if uid:
-        if await db.is_vip(uid):
-            await message.answer("❌ قبلاً VIP است.", reply_markup=await get_admin_panel_kb())
-        else:
-            await db.add_vip(uid, username)
-            await db.add_log("vip_add", message.from_user.id, f"Added VIP {uid}")
-            display = f"@{username}" if username else first_name or uid
-            await message.answer(f"✅ VIP {display} اضافه شد.", reply_markup=await get_admin_panel_kb())
-        await state.clear()
-
-@router.callback_query(F.data == "remove_privileged")
-async def remove_priv(callback: CallbackQuery):
-    await callback.answer()
-    admins = await db.get_admins()
-    vips = await db.get_vips()
-    admins_show = {k: v for k, v in admins.items() if str(k) != str(ADMIN_ID)}
-    if not admins_show and not vips:
-        await callback.answer("❌ هیچکس برای حذف نیست.", show_alert=True)
-        return
-    await callback.message.edit_text("❌ انتخاب کنید:", reply_markup=remove_privileged_kb(admins_show, vips))
-
-@router.callback_query(F.data.startswith("ra_"))
-async def rem_admin(callback: CallbackQuery):
-    aid = callback.data.replace("ra_", "")
-    await db.remove_admin(int(aid))
-    await callback.answer("✅ حذف شد")
-    await remove_priv(callback)
-
-@router.callback_query(F.data.startswith("rv_"))
-async def rem_vip(callback: CallbackQuery):
-    vid = callback.data.replace("rv_", "")
-    await db.remove_vip(int(vid))
-    await callback.answer("✅ حذف شد")
-    await remove_priv(callback)
-
-@router.message(F.text == "📜 گزارشات")
-async def menu_logs(message: Message):
-    if not await db.is_admin(message.from_user.id):
-        return
-    logs_list = await db.get_logs(20)
-    if not logs_list:
-        await message.answer("📜 گزارشی نیست.", reply_markup=await get_admin_panel_kb())
-        return
-    txt = "📜 گزارشات:\n\n" + "\n".join([f"<code>{l['time'][:19]}</code> {l['action']}" for l in logs_list])
-    await message.answer(txt[:4000], reply_markup=await get_admin_panel_kb())
-
-@router.message(F.text == "🔗 لینک‌های فعال")
-async def menu_links(message: Message):
-    if not await db.is_admin(message.from_user.id):
-        return
-    files = await db.get_all_files()
-    if not files:
-        await message.answer("🔗 لینکی نیست.", reply_markup=await get_admin_panel_kb())
-        return
-    bot = await message.bot.get_me()
-    txt = "🔗 لینک‌ها:\n\n" + "\n".join([f"• {safe_html(f.get('caption','')[:20])}\n  /start {safe_html(fid)}" for fid, f in list(files.items())[:10]])
-    await message.answer(txt, reply_markup=await get_admin_panel_kb())
-
-@router.message(F.text == "💾 پشتیبان‌گیری")
-async def menu_backup(message: Message):
-    if not await db.is_admin(message.from_user.id):
-        return
-    import shutil
-    os.makedirs("backups", exist_ok=True)
-    fn = f"backups/backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
-    shutil.make_archive(fn.replace('.zip', ''), 'zip', '.', lambda x: x.endswith('.json'))
-    await message.answer_document(FSInputFile(fn), caption="✅ پشتیبان آماده")
-    await message.answer("💾 آماده شد.", reply_markup=await get_admin_panel_kb())
-
-@router.message(F.text.contains("ربات فعال است"))
-@router.message(F.text.contains("ربات خاموش است"))
-async def toggle_bot_from_panel(message: Message):
-    if not await db.is_admin(message.from_user.id):
-        return
-    new_status = await db.toggle_bot()
-    await db.add_log("toggle", message.from_user.id, f"Bot {'ON' if new_status else 'OFF'}")
-    kb = await get_admin_panel_kb()
-    if new_status:
-        await message.answer("🟢 **ربات روشن شد!**", reply_markup=kb)
-    else:
-        await message.answer("🔴 **ربات خاموش شد!**", reply_markup=kb)
-
-@router.callback_query(F.data == "toggle_forward_lock")
-async def toggle_forward_lock_handler(callback: CallbackQuery):
-    await callback.answer()
-    new_status = await db.toggle_forward_lock()
-    await db.add_log("settings", callback.from_user.id, f"Forward Lock {'ON' if new_status else 'OFF'}")
-    s = await db.get_settings()
-    await callback.message.edit_text("⚙️ تنظیمات", reply_markup=settings_kb(s))
-    if new_status:
-        await callback.message.answer("🔒 **قفل فوروارد فعال شد!**")
-    else:
-        await callback.message.answer("🔓 **قفل فوروارد غیرفعال شد!**")
-
-# ==================== UPLOAD ====================
-@router.message(UploadState.waiting)
-async def upload_receive(message: Message, state: FSMContext):
-    file_id, file_type, file_name = None, "document", ""
-    if message.photo:
-        file_id, file_type = message.photo[-1].file_id, "photo"
-    elif message.video:
-        file_id, file_type, file_name = message.video.file_id, "video", message.video.file_name or ""
-    elif message.audio:
-        file_id, file_type, file_name = message.audio.file_id, "audio", message.audio.file_name or ""
-    elif message.voice:
-        file_id, file_type = message.voice.file_id, "voice"
-    elif message.animation:
-        file_id, file_type, file_name = message.animation.file_id, "animation", message.animation.file_name or ""
-    elif message.sticker:
-        file_id, file_type = message.sticker.file_id, "sticker"
-    elif message.document:
-        file_id, file_type, file_name = message.document.file_id, "document", message.document.file_name or ""
-    if not file_id:
-        await message.answer("❌ فایل معتبر نیست.")
-        return
-    await state.update_data(file_id=file_id, file_type=file_type, file_name=file_name)
-    await state.set_state(UploadState.caption)
-    await message.answer("✅ دریافت شد! کپشن:", reply_markup=skip_back_inline())
-
-@router.callback_query(F.data == "skip_caption")
-async def skip_caption(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await state.update_data(caption="")
-    await state.set_state(UploadState.password)
-    await callback.message.edit_text("🔒 رمز؟", reply_markup=skip_pass_inline())
-
-@router.message(UploadState.caption)
-async def upload_caption(message: Message, state: FSMContext):
-    await state.update_data(caption=message.text or "")
-    await state.set_state(UploadState.password)
-    await message.answer("🔒 رمز؟", reply_markup=skip_pass_inline())
-
-@router.callback_query(F.data == "skip_password")
-async def skip_password(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    await state.update_data(password="")
-    await finalize_upload(callback.message, state, callback.from_user.id)
-
-@router.message(UploadState.password)
-async def upload_password(message: Message, state: FSMContext):
-    await state.update_data(password=message.text or "")
-    await finalize_upload(message, state, message.from_user.id)
-
-async def finalize_upload(message: Message, state: FSMContext, admin_id: int):
-    data = await state.get_data()
-    fid = str(uuid.uuid4())[:8]
-    await db.add_file({"id": fid, "file_id": data["file_id"], "type": data["file_type"], "caption": data.get("caption", ""), "file_name": data.get("file_name", ""), "password": data.get("password", ""), "admin": admin_id})
-    await db.add_log("upload", admin_id, f"Uploaded {fid}")
-    bot = await message.bot.get_me()
-    link = f"https://t.me/{bot.username}?start={fid}"
-    icon = {"photo": "🖼", "video": "🎬", "audio": "🎵", "voice": "🎤", "animation": "✨", "sticker": "🏷", "document": "📄"}.get(data["file_type"], "📁")
-    txt = f"✅ آپلود موفق!\n\n{icon}\n🆔: <code>{fid}</code>\n📝: {safe_html(data.get('caption',''))}\n"
-    if data.get("password"):
-        txt += f"🔑: <code>{safe_html(data['password'])}</code>\n\n"
-    txt += f"🔗: <a href='{link}'>کلیک</a>\n<code>{link}</code>"
-    await message.answer(txt, reply_markup=await get_admin_panel_kb())
-    await state.clear()
-
 # ==================== INLINE CALLBACKS ====================
 @router.callback_query(F.data == "panel")
 async def panel_callback(callback: CallbackQuery):
@@ -1272,92 +1944,6 @@ async def panel_callback(callback: CallbackQuery):
 @router.callback_query(F.data == "noop")
 async def noop(callback: CallbackQuery):
     await callback.answer()
-
-@router.callback_query(F.data == "files_list")
-async def files_list_cb(callback: CallbackQuery):
-    await callback.answer()
-    files = await db.get_all_files()
-    if not files:
-        await callback.message.edit_text("📂 فایلی نیست.")
-        return
-    await callback.message.edit_text(f"📂 فایل‌ها ({len(files)})", reply_markup=files_kb(files))
-
-@router.callback_query(F.data.startswith("files_pg_"))
-async def files_page(callback: CallbackQuery):
-    await callback.answer()
-    page = int(callback.data.replace("files_pg_", ""))
-    await callback.message.edit_text(f"📂 صفحه {page+1}", reply_markup=files_kb(await db.get_all_files(), page))
-
-@router.callback_query(F.data.startswith("file_"))
-async def file_info(callback: CallbackQuery):
-    await callback.answer()
-    f = await db.get_file(callback.data.replace("file_", ""))
-    if not f:
-        await callback.answer("❌ پیدا نشد", show_alert=True)
-        return
-    lock = "🔒 دارد" if f.get("password") else "🔓 ندارد"
-    await callback.message.edit_text(f"📁 {safe_html(f.get('caption',''))}\n🆔: <code>{safe_html(f['id'])}</code>\n📥: {f['downloads']}\n{lock}\n📅: {f['date'][:10]}", reply_markup=file_actions_kb(f['id']))
-
-@router.callback_query(F.data.startswith("dl_"))
-async def dl_file(callback: CallbackQuery):
-    await callback.answer("📥 ارسال...")
-    f = await db.get_file(callback.data.replace("dl_", ""))
-    if f:
-        await send_file_to_user(callback.message, f)
-        await notify_admins_download(callback.bot, f, callback.from_user)
-
-@router.callback_query(F.data.startswith("link_"))
-async def get_link(callback: CallbackQuery):
-    await callback.answer()
-    f = await db.get_file(callback.data.replace("link_", ""))
-    if f:
-        bot = await callback.bot.get_me()
-        link = f"https://t.me/{bot.username}?start={f['id']}"
-        await callback.message.answer(f"🔗 <a href='{link}'>کلیک</a>\n<code>{link}</code>")
-
-@router.callback_query(F.data.startswith("editcap_"))
-async def edit_cap_start(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    fid = callback.data.replace("editcap_", "")
-    await state.update_data(edit_fid=fid)
-    await state.set_state(EditState.waiting_caption)
-    await callback.message.edit_text("✏️ کپشن:", reply_markup=back_inline(f"file_{fid}"))
-
-@router.message(EditState.waiting_caption)
-async def edit_cap_save(message: Message, state: FSMContext):
-    data = await state.get_data()
-    if data.get("edit_fid"):
-        await db.update_caption(data["edit_fid"], message.text)
-        await message.answer("✅ ویرایش شد.", reply_markup=await get_admin_panel_kb())
-    await state.clear()
-
-@router.callback_query(F.data.startswith("setpass_"))
-async def set_pass_start(callback: CallbackQuery, state: FSMContext):
-    await callback.answer()
-    fid = callback.data.replace("setpass_", "")
-    await state.update_data(edit_fid=fid)
-    await state.set_state(EditState.waiting_password)
-    await callback.message.edit_text("🔒 رمز:", reply_markup=back_inline(f"file_{fid}"))
-
-@router.message(EditState.waiting_password)
-async def set_pass_save(message: Message, state: FSMContext):
-    data = await state.get_data()
-    if data.get("edit_fid"):
-        p = "" if message.text.lower() == "remove" else message.text
-        await db.update_password(data["edit_fid"], p)
-        await message.answer("✅ تنظیم شد.", reply_markup=await get_admin_panel_kb())
-    await state.clear()
-
-@router.callback_query(F.data.startswith("del_"))
-async def del_confirm(callback: CallbackQuery):
-    await callback.answer()
-    await callback.message.edit_text("⚠️ حذف شود؟", reply_markup=confirm_delete_kb(callback.data.replace("del_", "")))
-
-@router.callback_query(F.data.startswith("delyes_"))
-async def del_exec(callback: CallbackQuery):
-    await db.delete_file(callback.data.replace("delyes_", ""))
-    await callback.answer("✅ حذف شد")
-    await files_list_cb(callback)
 
 # ==================== SETTINGS ====================
 @router.callback_query(F.data == "settings")
@@ -1589,3 +2175,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+```
