@@ -2524,7 +2524,7 @@ async def broadcast_send(message: Message, state: FSMContext):
     prog = await message.answer(f"📢 0/{total}")
     for i, uid in enumerate(users.keys()):
         try:
-            await message.copy_to(int(uid))
+            await message.bot.copy_message(chat_id=int(uid), from_chat_id=message.chat.id, message_id=message.message_id)
             sent += 1
         except:
             failed += 1
