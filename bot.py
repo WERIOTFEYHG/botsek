@@ -508,7 +508,7 @@ async def get_admin_panel_kb():
         keyboard=[
             [KeyboardButton(text="📤 آپلود فایل جدید")],
             [KeyboardButton(text="📂 مدیریت فایل‌ها"), KeyboardButton(text="📊 آمار ربات")],
-            [KeyboardButton(text="📢 ارسال همگانی"), KeyboardButton(text="⚙️ تنظیمات")],
+            [KeyboardButton(text="📢 ارسال پیام همگانی"), KeyboardButton(text="⚙️ تنظیمات")],
             [KeyboardButton(text="👥 کاربران"), KeyboardButton(text="👮 ادمین‌ها")],
             [KeyboardButton(text="📜 گزارشات"), KeyboardButton(text="🔗 لینک‌های فعال")],
             [KeyboardButton(text="💾 پشتیبان‌گیری")],
@@ -1771,12 +1771,70 @@ async def del_exec(callback: CallbackQuery):
     await callback.answer("✅ حذف شد")
     await files_list_cb(callback)
 
-@router.message(F.text == "📢 ارسال همگانی")
+@router.message(F.text == "📢 ارسال پیام همگانی")
 async def menu_broadcast(message: Message, state: FSMContext):
     if not await db.is_admin(message.from_user.id):
         return
     await state.set_state(BroadcastState.waiting)
-    await message.answer("📢 پیام را بفرستید:", reply_markup=back_inline())
+    await message.answer("📢 لطفاً پیغام را ارسال کنید:", reply_markup=back_inline())
+
+@router.message(BroadcastState.waiting)
+async def broadcast_receive(message: Message, state: FSMContext):
+    await state.update_data(broadcast_message_id=message.message_id)
+    await state.update_data(broadcast_chat_id=message.chat.id)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ ارسال شود", callback_data="broadcast_confirm")],
+        [InlineKeyboardButton(text="❌ منصرف شدم", callback_data="broadcast_cancel")]
+    ])
+    await message.answer("📢 پیام دریافت شد. ارسال شود؟", reply_markup=kb)
+
+@router.callback_query(F.data == "broadcast_confirm")
+async def broadcast_confirm(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    data = await state.get_data()
+    msg_id = data.get("broadcast_message_id")
+    chat_id = data.get("broadcast_chat_id")
+    
+    if not msg_id or not chat_id:
+        await callback.message.edit_text("❌ خطا در دریافت پیام.")
+        await state.clear()
+        return
+    
+    users = await db.get_all_users()
+    total = len(users)
+    sent = 0
+    failed = 0
+    prog = await callback.message.edit_text(f"📢 در حال ارسال... 0/{total}")
+    
+    for i, uid in enumerate(users.keys()):
+        try:
+            await callback.bot.copy_message(
+                chat_id=int(uid),
+                from_chat_id=chat_id,
+                message_id=msg_id
+            )
+            sent += 1
+        except:
+            failed += 1
+        if (i+1) % 20 == 0:
+            try:
+                await prog.edit_text(f"📢 در حال ارسال... {i+1}/{total}")
+            except:
+                pass
+        await asyncio.sleep(0.05)
+    
+    await prog.edit_text(
+        f"✅ ارسال همگانی به پایان رسید!\n\n✅ موفق: {sent}\n❌ ناموفق: {failed}",
+        reply_markup=await get_admin_panel_kb()
+    )
+    await state.clear()
+
+@router.callback_query(F.data == "broadcast_cancel")
+async def broadcast_cancel(callback: CallbackQuery, state: FSMContext):
+    await callback.answer()
+    await state.clear()
+    await callback.message.edit_text("❌ ارسال همگانی لغو شد.")
+    await callback.message.answer("👑 پنل مدیریت:", reply_markup=await get_admin_panel_kb())
 
 @router.message(F.text == "⚙️ تنظیمات")
 async def menu_settings(message: Message):
@@ -2514,25 +2572,6 @@ async def fj_del(callback: CallbackQuery):
             break
     await callback.answer("✅ حذف شد")
     await fj_menu(callback)
-
-@router.message(BroadcastState.waiting)
-async def broadcast_send(message: Message, state: FSMContext):
-    users = await db.get_all_users()
-    total = len(users)
-    sent = 0
-    failed = 0
-    prog = await message.answer(f"📢 0/{total}")
-    for i, uid in enumerate(users.keys()):
-        try:
-            await message.bot.copy_message(chat_id=int(uid), from_chat_id=message.chat.id, message_id=message.message_id)
-            sent += 1
-        except:
-            failed += 1
-        if (i+1) % 20 == 0:
-            await prog.edit_text(f"📢 {i+1}/{total}")
-        await asyncio.sleep(0.05)
-    await prog.edit_text(f"✅ {sent}/{total}\n❌ {failed}", reply_markup=await get_admin_panel_kb())
-    await state.clear()
 
 async def on_startup(bot: Bot):
     db.init_files()
